@@ -3,7 +3,7 @@ import "./globals.css";
 import { ConversationsProvider } from "@/components/ConversationsProvider";
 
 export const metadata: Metadata = {
-  title: "Local Chat",
+  title: "Chat",
   description: "A local chat interface for LM Studio",
 };
 
