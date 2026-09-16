@@ -3,9 +3,14 @@ import ThinkingSection from "./ThinkingSection";
 
 interface MessageBubbleProps {
   message: DisplayMessage;
+  /** Set only on the assistant message currently streaming. */
+  fetchingUrls?: string[] | null;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({
+  message,
+  fetchingUrls,
+}: MessageBubbleProps) {
   if (message.role === "user") {
     // Only bubble in the app: subtle fill, right-aligned, width-to-content.
     return (
@@ -29,11 +34,20 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           reasoning={message.reasoning}
           reasoningMs={message.reasoningMs}
           isThinking={isThinking}
+          fetchingUrls={fetchingUrls}
         />
       )}
       {message.content.length > 0 && (
         <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.7] text-primary">
           {message.content}
+        </p>
+      )}
+      {message.failure && (
+        // Sits in the assistant slot rather than as a detached line, so the
+        // failure reads as the outcome of this turn. Muted, because it is
+        // app output rather than something the model said.
+        <p className="mt-2 whitespace-pre-wrap break-words text-[15px] leading-[1.7] text-secondary">
+          {message.failure}
         </p>
       )}
     </div>

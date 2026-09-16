@@ -11,6 +11,8 @@ export interface ChatMessage {
  * we translate LM Studio's chunks into these before forwarding.
  */
 export type StreamEvent =
+  /** Emitted before generation starts, while page content is being fetched. */
+  | { type: "fetching"; urls: string[] }
   | { type: "reasoning"; text: string }
   | { type: "content"; text: string }
   | { type: "done" }
@@ -29,6 +31,12 @@ export interface DisplayMessage {
   /** Wall-clock time reasoning took, in ms. Null until it's known. */
   reasoningMs: number | null;
   isStreaming: boolean;
+  /**
+   * Why this turn failed, if it did. Rendered in the assistant slot but kept
+   * out of `content` on purpose: content is what gets replayed to the model
+   * as history, and a transport error is not something the model said.
+   */
+  failure?: string | null;
 }
 
 export interface Conversation {

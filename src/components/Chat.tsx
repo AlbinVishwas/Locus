@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSSEStream } from "@/lib/parseSSE";
 import { createId } from "@/lib/id";
-import type { ChatMessage, Conversation, DisplayMessage } from "@/lib/types";
+import { toHistoryPayload } from "@/lib/history";
+import type { Conversation, DisplayMessage } from "@/lib/types";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 
@@ -27,7 +28,10 @@ interface ChatProps {
 export default function Chat({ conversation, onMessagesChange }: ChatProps) {
   const [messages, setMessages] = useState<DisplayMessage[]>(conversation.messages);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Transient read-phase state for the in-flight turn only. Deliberately not
+  // on DisplayMessage: that gets persisted, and this describes a moment
+  // rather than the message.
+  const [fetchingUrls, setFetchingUrls] = useState<string[] | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -105,7 +109,6 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       const trimmed = text.trim();
       if (!trimmed || isStreaming) return;
 
-      setError(null);
       shouldAutoScrollRef.current = true;
 
       const userMessage: DisplayMessage = {
@@ -124,13 +127,10 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         reasoning: "",
         reasoningMs: null,
         isStreaming: true,
+        failure: null,
       };
 
-      // History sent to the API is only ever { role, content } — reasoning
-      // and streaming/timing state are UI-only and never round-trip.
-      const historyPayload: ChatMessage[] = [...messages, userMessage].map(
-        (m) => ({ role: m.role, content: m.content })
-      );
+      const historyPayload = toHistoryPayload([...messages, userMessage]);
 
       commitMessages((prev) => [...prev, userMessage, assistantMessage]);
       setIsStreaming(true);
@@ -140,6 +140,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
 
       let reasoningStartedAt: number | null = null;
       let reasoningEndedAt: number | null = null;
+      let hasVisibleOutput = false;
 
       try {
         const res = await fetch("/api/chat", {
@@ -156,13 +157,23 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         }
 
         for await (const event of parseSSEStream(res.body)) {
-          if (event.type === "reasoning") {
+          // Any token means generation has started, so the read phase is
+          // over — clear it before handling the token itself.
+          if (event.type === "reasoning" || event.type === "content") {
+            setFetchingUrls(null);
+          }
+
+          if (event.type === "fetching") {
+            setFetchingUrls(event.urls);
+          } else if (event.type === "reasoning") {
+            hasVisibleOutput = true;
             if (reasoningStartedAt === null) reasoningStartedAt = performance.now();
             patchAssistantMessage(assistantId, (m) => ({
               ...m,
               reasoning: m.reasoning + event.text,
             }));
           } else if (event.type === "content") {
+            hasVisibleOutput = true;
             // First content token marks the end of the reasoning phase —
             // that's the "Thought for Ns" duration shown once collapsed.
             if (reasoningStartedAt !== null && reasoningEndedAt === null) {
@@ -180,7 +191,11 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
               }));
             }
           } else if (event.type === "error") {
-            setError(event.message);
+            hasVisibleOutput = true;
+            patchAssistantMessage(assistantId, (m) => ({
+              ...m,
+              failure: event.message,
+            }));
           }
         }
 
@@ -197,10 +212,21 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       } catch (err) {
         const isAbort = err instanceof DOMException && err.name === "AbortError";
         if (!isAbort) {
-          setError(err instanceof Error ? err.message : "Something went wrong.");
+          hasVisibleOutput = true;
+          patchAssistantMessage(assistantId, (m) => ({
+            ...m,
+            failure: err instanceof Error ? err.message : "Something went wrong.",
+          }));
         }
       } finally {
-        patchAssistantMessage(assistantId, (m) => ({ ...m, isStreaming: false }));
+        // Covers the paths that never reach a token: abort, network error, or
+        // a stream that ends after "fetching" without generating.
+        setFetchingUrls(null);
+        if (hasVisibleOutput) {
+          patchAssistantMessage(assistantId, (m) => ({ ...m, isStreaming: false }));
+        } else {
+          commitMessages((prev) => prev.filter((m) => m.id !== assistantId));
+        }
         setIsStreaming(false);
         abortControllerRef.current = null;
       }
@@ -219,7 +245,10 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto"
       >
-        <MessageList messages={messages} error={error} />
+        <MessageList
+          messages={messages}
+          fetchingUrls={fetchingUrls}
+        />
       </div>
       <ChatInput
         isStreaming={isStreaming}

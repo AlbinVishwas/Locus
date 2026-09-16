@@ -4,17 +4,41 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import type { StreamEvent } from "@/lib/types";
+import { validateChatRequest } from "@/lib/chatRequest";
+import { describeLmStudioError } from "@/lib/lmStudioError";
+import {
+  buildUrlContextPrompt,
+  extractUrls,
+  fetchUrlContexts,
+} from "@/lib/urlContext";
 
 // Node runtime: we're proxying a long-lived stream to a local process,
 // no need (or benefit) to run this on the edge runtime.
 export const runtime = "nodejs";
 
-const client = new OpenAI({
-  baseURL: process.env.LM_STUDIO_BASE_URL ?? "http://localhost:1234/v1",
-  apiKey: "lm-studio", // LM Studio ignores the value but the SDK requires one
-});
+/**
+ * The SDK default is 10 minutes, which is indistinguishable from a hang when
+ * the endpoint is a tunnel that has quietly gone away. This bounds the wait
+ * for the response to start; once the stream is flowing it is not re-armed.
+ */
+const REQUEST_TIMEOUT_MS = Number(process.env.LM_STUDIO_TIMEOUT_MS ?? 120_000);
 
-const MODEL = process.env.LM_STUDIO_MODEL ?? "qwen/qwen3-4b";
+/**
+ * Built per request, not once at module scope. Reading the env inside the
+ * handler means editing .env.local takes effect on the next message instead
+ * of on the next full server restart — which matters most when the base URL
+ * is a tunnel whose address changes.
+ */
+function lmStudio() {
+  const baseURL = process.env.LM_STUDIO_BASE_URL ?? "http://localhost:1234/v1";
+  const model = process.env.LM_STUDIO_MODEL ?? "qwen/qwen3-4b";
+  const client = new OpenAI({
+    baseURL,
+    apiKey: "lm-studio", // LM Studio ignores the value but the SDK requires one
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  return { client, model, baseURL };
+}
 
 // LM Studio (via its reasoning-capable models, e.g. Qwen3) adds a
 // `reasoning_content` field to the delta alongside the standard `content`
@@ -24,17 +48,81 @@ type ReasoningDelta = ChatCompletionChunk.Choice.Delta & {
   reasoning_content?: string | null;
 };
 
+/** How far back to look for a link when the current message has none. */
+const FOLLOW_UP_WINDOW = 6;
+
+/** Index of the newest user message, or -1. */
+function latestUserIndex(messages: ChatCompletionMessageParam[]): number {
+  return messages.findLastIndex(
+    (m) => m.role === "user" && typeof m.content === "string"
+  );
+}
+
+/**
+ * Picks the URLs to expand for this turn.
+ *
+ * Normally that's whatever the current message links to. When it links to
+ * nothing, we look back over the last FOLLOW_UP_WINDOW messages for the most
+ * recent user message that did — so "now show me just the second column"
+ * still has the table in context. Older links stay out of reach on purpose:
+ * a link from twenty messages ago is rarely what the user means now.
+ *
+ * The pages are always re-fetched; nothing is cached between turns, so the
+ * model sees the page as it is now rather than as it was.
+ */
+function urlsToExpand(messages: ChatCompletionMessageParam[]): string[] {
+  const current = latestUserIndex(messages);
+  if (current === -1) return [];
+
+  const currentUrls = extractUrls(messages[current].content as string);
+  if (currentUrls.length > 0) return currentUrls;
+
+  const start = Math.max(0, current - FOLLOW_UP_WINDOW);
+  for (let i = current - 1; i >= start; i--) {
+    const message = messages[i];
+    if (message.role !== "user" || typeof message.content !== "string") continue;
+
+    const urls = extractUrls(message.content);
+    if (urls.length > 0) return urls;
+  }
+
+  return [];
+}
+
+/**
+ * Returns a copy of the message list with the final user message replaced by
+ * the URL-context prompt. Copied rather than mutated so the caller's array —
+ * which mirrors what the client sent — stays untouched.
+ */
+function withExpandedUserMessage(
+  messages: ChatCompletionMessageParam[],
+  results: Awaited<ReturnType<typeof fetchUrlContexts>>
+): ChatCompletionMessageParam[] {
+  const index = messages.findLastIndex(
+    (m) => m.role === "user" && typeof m.content === "string"
+  );
+  if (index === -1) return messages;
+
+  const original = messages[index].content as string;
+  const copy = [...messages];
+  copy[index] = {
+    role: "user",
+    content: buildUrlContextPrompt(results, original),
+  };
+  return copy;
+}
+
 export async function POST(req: Request) {
   let messages: ChatCompletionMessageParam[];
   try {
     const body = await req.json();
-    messages = body.messages;
+    const validation = validateChatRequest(body);
+    if (!validation.ok) {
+      return new Response(validation.error, { status: 400 });
+    }
+    messages = validation.messages;
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
-  }
-
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return new Response("`messages` array is required", { status: 400 });
   }
 
   const encoder = new TextEncoder();
@@ -45,15 +133,32 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
+      const { client, model, baseURL } = lmStudio();
+
       try {
+        // If this turn has page context to pull in — from the current
+        // message or, for follow-ups, a recent one — fetch it and swap in an
+        // expanded prompt. This happens per-request and is never persisted:
+        // the browser keeps sending the text the user typed, so the UI and the
+        // stored conversation stay free of the wrapper, and which message the
+        // links came from is never revealed to the client.
+        let outbound = messages;
+        const urls = urlsToExpand(messages);
+
+        if (urls.length > 0) {
+          send({ type: "fetching", urls });
+          const results = await fetchUrlContexts(urls, req.signal);
+          outbound = withExpandedUserMessage(messages, results);
+        }
+
         // Passing req.signal means: if the client aborts the fetch (stop
         // button, tab close, navigation), that cancellation propagates
         // down to the in-flight request to LM Studio too, instead of
         // leaving it generating in the background.
         const completion = await client.chat.completions.create(
           {
-            model: MODEL,
-            messages,
+            model,
+            messages: outbound,
             stream: true,
           },
           { signal: req.signal }
@@ -77,11 +182,20 @@ export async function POST(req: Request) {
         // req.signal.aborted, or the SDK throwing on the cancelled fetch).
         // That's an expected stop, not a failure — don't report it.
         if (!req.signal.aborted) {
-          const message =
-            err instanceof Error
-              ? err.message
-              : "Unknown error contacting LM Studio";
-          send({ type: "error", message });
+          // The SDK collapses every transport failure into the string
+          // "Connection error." and hides the real cause (ECONNREFUSED, a TLS
+          // failure, a proxy/dispatcher mismatch) on err.cause. Log the whole
+          // thing before it gets flattened into a one-line UI message.
+          console.error("[/api/chat] request to LM Studio failed", {
+            baseURL,
+            model,
+            error: err,
+            cause: err instanceof Error ? err.cause : undefined,
+          });
+          send({
+            type: "error",
+            message: describeLmStudioError(err, baseURL, REQUEST_TIMEOUT_MS),
+          });
         }
       } finally {
         controller.close();

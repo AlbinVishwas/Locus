@@ -1,5 +1,15 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Local Setup
+
+This is a local chat interface for [LM Studio](https://lmstudio.ai/). Configure
+`LM_STUDIO_BASE_URL` and `LM_STUDIO_MODEL` in `.env.local`, then run `npm run dev`.
+
+The optional URL-context feature retrieves links from user messages only during
+development. A production deployment must explicitly set
+`LOCAL_CHAT_ENABLE_URL_CONTEXT=true`; do that only for a trusted local
+deployment, not a public service.
+
 ## Getting Started
 
 First, run the development server:
