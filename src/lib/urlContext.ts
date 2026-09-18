@@ -480,12 +480,16 @@ export function buildUrlContextPrompt(
     // With more than one page, the model needs to be able to tell them apart
     // when citing or comparing.
     const label = multiple ? ` ${index + 1} of ${results.length}` : "";
+    // Host rather than full URL: the model tends to echo back whatever
+    // identifier it is given, and a bare hostname reads far better in an
+    // answer than a full link does.
+    const source = hostOf(result.url);
     const body = result.ok
       ? formatContent(result)
       : `This page could not be retrieved: ${result.reason}. Inform the user rather than guessing at what the page might contain.`;
 
     return [
-      `--- BEGIN PAGE${label} CONTENT (from ${result.url}) ---`,
+      `--- BEGIN PAGE${label} CONTENT (from ${source}) ---`,
       body,
       `--- END PAGE${label} CONTENT ---`,
     ].join("\n");
@@ -496,8 +500,38 @@ export function buildUrlContextPrompt(
     "",
     blocks.join("\n\n"),
     "",
+    ANSWER_STYLE,
+    "",
     `User's message: ${userMessage}`,
   ].join("\n");
+}
+
+/**
+ * How the answer should read.
+ *
+ * Left to itself the model narrates its own inputs — "the website https://x.com
+ * is described in the reference content as…" — which puts a raw link and a
+ * description of the plumbing in front of someone who just asked what a page
+ * says. These rules are about the shape of the reply only; the data-only
+ * framing above is what keeps the page's own text from steering it.
+ */
+const ANSWER_STYLE = [
+  "Write the reply for someone who already knows which page they asked about:",
+  "- Never print the URL. Do not mention the reference content, the provided text, the extracted page, or how you received it. Name the source by its title or site name only if the answer needs it.",
+  "- Open with one sentence that answers the question directly.",
+  "- If there is more worth saying, follow with a few short markdown bullets. Give a bullet a short bold lead-in only where that genuinely helps scanning.",
+  "- Use a markdown table when comparing several items across the same fields.",
+  "- If the page does not cover something, say plainly that the page does not say it. Do not phrase that as a gap in \"the provided content\".",
+  "- Be brief. Do not restate the question, and do not end with a summary of what you just said.",
+].join("\n");
+
+/** Hostname without a leading www, falling back to the raw URL if unparseable. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 /** Page title is worth a line of context; tables get a nudge to stay tabular. */

@@ -184,6 +184,33 @@ describe("buildUrlContextPrompt", () => {
   });
 });
 
+describe("buildUrlContextPrompt answer style", () => {
+  const prompt = buildUrlContextPrompt(
+    [{ url: "https://www.example.com/docs/page", ok: true, title: "Example", content: "body ".repeat(20), isTable: false }],
+    "what is this?"
+  );
+
+  it("identifies the source by host, not by a full link to echo back", () => {
+    expect(prompt).toContain("(from example.com)");
+    expect(prompt).not.toContain("https://www.example.com/docs/page CONTENT");
+  });
+
+  it("tells the model not to print the URL or narrate its inputs", () => {
+    expect(prompt).toContain("Never print the URL");
+    expect(prompt).toContain("Do not mention the reference content");
+  });
+
+  it("asks for a direct opening line and short structure", () => {
+    expect(prompt).toContain("Open with one sentence that answers the question directly");
+    expect(prompt).toContain("short markdown bullets");
+  });
+
+  it("keeps the data-only framing ahead of the style rules", () => {
+    // Style guidance must never displace the injection framing.
+    expect(prompt.indexOf("DATA ONLY")).toBeLessThan(prompt.indexOf("Never print the URL"));
+  });
+});
+
 describe("buildUrlContextPrompt (multiple pages)", () => {
   it("numbers the fences so the model can tell two pages apart", () => {
     const prompt = buildUrlContextPrompt(
@@ -194,8 +221,8 @@ describe("buildUrlContextPrompt (multiple pages)", () => {
       "compare them"
     );
 
-    expect(prompt).toContain("--- BEGIN PAGE 1 of 2 CONTENT (from https://a.example) ---");
-    expect(prompt).toContain("--- BEGIN PAGE 2 of 2 CONTENT (from https://b.example) ---");
+    expect(prompt).toContain("--- BEGIN PAGE 1 of 2 CONTENT (from a.example) ---");
+    expect(prompt).toContain("--- BEGIN PAGE 2 of 2 CONTENT (from b.example) ---");
   });
 });
 

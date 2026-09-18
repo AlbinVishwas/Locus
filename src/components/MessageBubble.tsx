@@ -1,5 +1,6 @@
 import type { DisplayMessage } from "@/lib/types";
 import ThinkingSection from "./ThinkingSection";
+import Markdown from "./Markdown";
 
 interface MessageBubbleProps {
   message: DisplayMessage;
@@ -37,11 +38,7 @@ export default function MessageBubble({
           fetchingUrls={fetchingUrls}
         />
       )}
-      {message.content.length > 0 && (
-        <p className="whitespace-pre-wrap break-words text-[15px] leading-[1.7] text-primary">
-          {message.content}
-        </p>
-      )}
+      {message.content.length > 0 && <Markdown>{message.content}</Markdown>}
       {message.failure && (
         // Sits in the assistant slot rather than as a detached line, so the
         // failure reads as the outcome of this turn. Muted, because it is
