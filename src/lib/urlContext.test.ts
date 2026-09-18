@@ -247,14 +247,6 @@ describe("fetchPageContent SSRF guard", () => {
       reason: "the URL points to a private or local network address",
     });
   });
-
-  it("still allows a public IPv6 literal", async () => {
-    const result = await fetchPageContent("http://[2606:2800:220:1:248:1893:25c8:1946]/x");
-
-    expect(result).toMatchObject({ ok: false });
-    if (result.ok) throw new Error("Expected a fetch failure, not a block");
-    expect(result.reason).not.toContain("private or local network");
-  });
 });
 
 describe("fetchUrlContexts", () => {

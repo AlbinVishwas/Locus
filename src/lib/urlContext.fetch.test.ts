@@ -105,6 +105,22 @@ describe("SSRF guard on every hop", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a public IPv6 literal through to the fetch", async () => {
+    // Proves the address check distinguishes public from private rather than
+    // blocking every bracketed address. Offline on purpose: the earlier
+    // version made a real request and was flaky without IPv6 routing.
+    fetchMock.mockResolvedValueOnce(
+      html(`<html><body><p>${"public v6 ".repeat(10)}</p></body></html>`)
+    );
+
+    const result = await fetchPageContent(
+      "http://[2606:2800:220:1:248:1893:25c8:1946]/x"
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks a public hostname that resolves to loopback", async () => {
     const result = await fetchPageContent("https://evil.example/x");
 
