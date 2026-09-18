@@ -164,16 +164,41 @@ export async function POST(req: Request) {
           { signal: req.signal }
         );
 
+        let emitted = false;
+
         for await (const chunk of completion) {
           const delta = chunk.choices[0]?.delta as ReasoningDelta | undefined;
           if (!delta) continue;
 
           if (delta.reasoning_content) {
+            emitted = true;
             send({ type: "reasoning", text: delta.reasoning_content });
           }
           if (delta.content) {
+            emitted = true;
             send({ type: "content", text: delta.content });
           }
+        }
+
+        // A stream that ends without a single token is not success. The SDK
+        // only throws on a non-2xx, so anything that answers 200 without being
+        // an OpenAI-compatible stream — a proxy's HTML interstitial, an empty
+        // body, a non-streamed JSON reply — arrives here as a clean, empty
+        // iteration. Reporting "done" would render as a blank answer with no
+        // explanation, which is the failure mode this route exists to avoid.
+        if (!emitted) {
+          console.error("[/api/chat] LM Studio returned no completion data", {
+            baseURL,
+            model,
+          });
+          send({
+            type: "error",
+            message:
+              `LM Studio at ${baseURL} answered, but returned no completion data. ` +
+              `Check that the URL points at an OpenAI-compatible endpoint (it should end in /v1) ` +
+              `and that the model "${model}" is loaded.`,
+          });
+          return;
         }
 
         send({ type: "done" });
