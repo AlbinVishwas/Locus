@@ -11,7 +11,12 @@ let cached: { file: string; inode: number; db: Database.Database } | null = null
  * the chat route's LM Studio settings, so changing it needs no rebuild.
  */
 export function indexPath(): string {
-  return path.resolve(process.env.SEARCH_INDEX_PATH ?? path.join(process.cwd(), "data/index/search.db"));
+  // turbopackIgnore: this path is only known at runtime. Without the hint,
+  // Next's file tracer can't tell what it points at, traces the whole project
+  // and copies data/ — client PDFs included — into the server bundle.
+  return path.resolve(
+    /*turbopackIgnore: true*/ process.env.SEARCH_INDEX_PATH ?? path.join(/*turbopackIgnore: true*/ process.cwd(), "data/index/search.db")
+  );
 }
 
 /**
@@ -28,17 +33,20 @@ export function getIndexDb(): Database.Database {
   const file = indexPath();
   let stat: fs.Stats;
   try {
-    stat = fs.statSync(file);
+    stat = fs.statSync(/*turbopackIgnore: true*/ file);
   } catch {
+    // The path goes to the server log only: it describes the server's disk,
+    // which a browser has no business seeing.
+    console.error(`[search] no index at ${file}`);
     throw new IndexUnavailableError(
-      `No search index at ${file}. Build it with \`npm run index\`, or set SEARCH_INDEX_PATH.`
+      "The search index hasn't been built yet. Build it with `npm run index`, or set SEARCH_INDEX_PATH."
     );
   }
 
   if (cached && cached.file === file && cached.inode === stat.ino) return cached.db;
 
   cached?.db.close();
-  const db = new Database(file, { readonly: true, fileMustExist: true });
+  const db = new Database(/*turbopackIgnore: true*/ file, { readonly: true, fileMustExist: true });
   // If the indexer is mid-write, wait briefly instead of failing the search.
   db.pragma("busy_timeout = 2000");
   cached = { file, inode: stat.ino, db };

@@ -7,6 +7,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // data/ holds client tender PDFs and the search index built from them.
+  // Never let file tracing copy any of it into a server bundle, whatever a
+  // route's code looks like to the tracer. (Shipping an index with a
+  // deployment, if ever chosen, would be an explicit include of that one file.)
+  outputFileTracingExcludes: {
+    "/*": ["./data/**/*"],
+  },
 };
 
 export default nextConfig;
