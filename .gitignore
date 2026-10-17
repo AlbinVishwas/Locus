@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tender search: client PDFs and the index built from them. Never commit.
+/data/

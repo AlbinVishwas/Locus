@@ -1,0 +1,8 @@
+# The Vercel CLI does not read .gitignore: it uploads everything except its
+# built-in defaults (node_modules, .next, .vercel, .env.local, ...) and the
+# rules below. The tender PDFs and the search index are client documents and
+# must never leave this machine through a deploy.
+#
+# No trailing slash on purpose: the CLI tests the bare folder name, so "/data/"
+# would still list an empty "data" entry in the upload.
+/data
