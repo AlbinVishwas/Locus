@@ -21,7 +21,13 @@ const URL_REGEX = /https?:\/\/[^\s<>"'`]+/gi;
 /** More than a couple of pages blows the context budget and the latency budget. */
 const MAX_URLS = 2;
 
-const FETCH_TIMEOUT_MS = 9000;
+/**
+ * Generous on purpose. Most pages answer in well under a second, but some
+ * public-sector sites tarpit non-browser clients and take 35-60s to send a
+ * first byte while still returning a perfectly good 200. At 9s those pages
+ * were reported as unreachable when they were merely slow.
+ */
+const FETCH_TIMEOUT_MS = Number(process.env.URL_CONTEXT_TIMEOUT_MS ?? 75_000);
 
 /** Redirect hops allowed before we give up; matches what browsers do (~20) but tighter. */
 const MAX_REDIRECTS = 5;
@@ -143,8 +149,17 @@ export async function fetchPageContent(
           reason: `the request timed out after ${FETCH_TIMEOUT_MS / 1000}s`,
         };
       }
-      const detail =
-        err instanceof Error ? err.message : "unknown network error";
+      // undici reports every connection-level failure as the same opaque
+      // "fetch failed"; the code that says what actually went wrong
+      // (ECONNREFUSED, ECONNRESET, a TLS error) hangs off `cause`.
+      const cause = err instanceof Error ? err.cause : undefined;
+      const code =
+        cause && typeof cause === "object" && "code" in cause
+          ? String((cause as { code?: unknown }).code)
+          : undefined;
+      const detail = err instanceof Error
+        ? [err.message, code].filter(Boolean).join(": ")
+        : "unknown network error";
       return { url, ok: false, reason: `the request failed (${detail})` };
     }
 

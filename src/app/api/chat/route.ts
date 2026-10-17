@@ -16,6 +16,10 @@ import {
 // no need (or benefit) to run this on the edge runtime.
 export const runtime = "nodejs";
 
+// A slow page fetch can take over a minute before the model is even called,
+// which exceeds the platform default and would kill the request mid-flight.
+export const maxDuration = 120;
+
 /**
  * The SDK default is 10 minutes, which is indistinguishable from a hang when
  * the endpoint is a tunnel that has quietly gone away. This bounds the wait
