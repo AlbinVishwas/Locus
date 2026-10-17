@@ -6,7 +6,8 @@
  *               pages get a row, so a gap is visible rather than absent.
  *   texts       the searchable text of a page. A page has up to two: its PDF
  *               text layer ("layer") and its OCR reading ("ocr"). Mixed pages
- *               keep both, so neither reading is lost.
+ *               keep both, so neither reading is lost. Row ids are derived
+ *               from the page id (see textId).
  *   texts_exact / texts_loose
  *               the full-text indexes over texts.search / texts.loose.
  *
@@ -25,13 +26,26 @@
  * not another copy of the text, which roughly halves the file size.
  * contentless_delete=1 still lets us delete a document's rows on re-index.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const PAGE_SOURCES = ["text", "text+ocr", "ocr", "blank", "failed"] as const;
 export type PageSource = (typeof PAGE_SOURCES)[number];
 
 export const TEXT_KINDS = ["layer", "ocr"] as const;
 export type TextKind = (typeof TEXT_KINDS)[number];
+
+/**
+ * A text row's id is derived from its page: page id * 2, plus 1 for the OCR
+ * reading. The full-text index returns only these ids, so the page and the
+ * reading behind every match are known without looking anything up.
+ */
+export function textId(pageId: number, kind: TextKind): number {
+  return pageId * 2 + (kind === "ocr" ? 1 : 0);
+}
+
+export function splitTextId(id: number): { pageId: number; kind: TextKind } {
+  return { pageId: Math.floor(id / 2), kind: id % 2 === 1 ? "ocr" : "layer" };
+}
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS meta (

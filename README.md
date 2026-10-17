@@ -10,6 +10,52 @@ development. A production deployment must explicitly set
 `LOCAL_CHAT_ENABLE_URL_CONTEXT=true`; do that only for a trusted local
 deployment, not a public service.
 
+## Tender search
+
+Full-text search over tender PDFs: type any text, get every document and page
+that contains it, with a highlighted snippet. Deterministic: the index is
+queried directly and no language model is involved. Details, measurements and
+open decisions: [docs/tender-search-report.md](docs/tender-search-report.md).
+
+One-time setup (macOS):
+
+```bash
+brew install poppler tesseract tesseract-lang
+npm install
+```
+
+Put the PDFs in `data/tenders/` (gitignored and excluded from Vercel uploads;
+never commit them), then:
+
+```bash
+npm run index            # build/update data/index/search.db and print the index report
+npm run dev              # open http://localhost:3000/search (or "Search documents" in the sidebar)
+```
+
+`npm run index` is incremental: unchanged files are skipped, changed ones
+re-indexed, deleted ones removed. `npm run index -- --force` rebuilds from
+scratch (OCR results are cached, so this is fast).
+
+Other commands:
+
+| Command | What it does |
+| --- | --- |
+| `npm run verify:index` | Compares the real index against a brute-force scan on ~2000 queries |
+| `npm run measure:mixed` | One-off audit: OCRs every text page to find text missing from the text layer |
+| `npm run bench` | Builds a 100,000-page synthetic index and reports size and p50/p95 latency |
+
+Indexer settings (environment variables, all optional):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `TENDERS_DIR` | `data/tenders` | Folder of PDFs to index |
+| `SEARCH_INDEX_PATH` | `data/index/search.db` | Index file (also read by `/api/search`) |
+| `OCR_LANG` | `eng` | Tesseract language(s), e.g. `eng+hin` |
+| `OCR_PAGES` | `all` | `all`: OCR every non-blank page; `auto`: only pages the heuristics flag |
+| `OCR_DPI` | `300` | Render resolution for OCR |
+| `OCR_CONCURRENCY` | cores - 2 | Parallel OCR processes |
+| `PAGE_TIMEOUT_MS` | `120000` | Per tool call; a page over it is recorded as failed |
+
 ## Getting Started
 
 First, run the development server:

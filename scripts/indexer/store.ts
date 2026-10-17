@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { foldCase, loosen, normalizeText } from "../../src/lib/search/normalize";
-import { SCHEMA_SQL, SCHEMA_VERSION, type PageSource } from "../../src/lib/search/schema";
+import { SCHEMA_SQL, SCHEMA_VERSION, textId, type PageSource } from "../../src/lib/search/schema";
 
 /**
  * Writing the index. Only the indexer (and tests) use this; the app opens the
@@ -66,6 +66,18 @@ export function storedDocuments(db: Database.Database): StoredDocument[] {
     .all() as StoredDocument[];
 }
 
+/**
+ * Marks the index as changed. Every write goes through a function here that
+ * calls this inside its transaction; search() reloads its in-memory page map
+ * when the value differs from the one it loaded.
+ */
+function bumpGeneration(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO meta (key, value) VALUES ('generation', '1')
+     ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1`
+  ).run();
+}
+
 /** Removes a document and everything derived from it, including index rows. */
 export function deleteDocument(db: Database.Database, docId: number): void {
   const textIds = db
@@ -80,6 +92,7 @@ export function deleteDocument(db: Database.Database, docId: number): void {
   }
   // pages and texts follow through ON DELETE CASCADE.
   db.prepare("DELETE FROM documents WHERE id = ?").run(docId);
+  bumpGeneration(db);
 }
 
 export function renameDocument(db: Database.Database, docId: number, filename: string): void {
@@ -87,6 +100,7 @@ export function renameDocument(db: Database.Database, docId: number, filename: s
   db.prepare(
     "UPDATE documents SET filename = ?, filename_search = ?, filename_loose = ? WHERE id = ?"
   ).run(filename, folded, loosen(folded), docId);
+  bumpGeneration(db);
 }
 
 /**
@@ -104,7 +118,7 @@ export function replaceDocument(db: Database.Database, doc: ExtractedDocument): 
       (doc_id, page_no, page_label, source, ocr_reason, image_coverage, layer_chars, ocr_chars, error)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertText = db.prepare(
-    "INSERT INTO texts (page_id, kind, body, search, loose) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO texts (id, page_id, kind, body, search, loose) VALUES (?, ?, ?, ?, ?, ?)"
   );
   const insertExact = db.prepare("INSERT INTO texts_exact (rowid, search) VALUES (?, ?)");
   const insertLoose = db.prepare("INSERT INTO texts_loose (rowid, loose) VALUES (?, ?)");
@@ -151,10 +165,12 @@ export function replaceDocument(db: Database.Database, doc: ExtractedDocument): 
         if (body === "") continue;
         const search = foldCase(body);
         const loose = loosen(search);
-        const textId = insertText.run(pageId, kind, body, search, loose).lastInsertRowid;
-        insertExact.run(textId, search);
-        insertLoose.run(textId, loose);
+        const id = textId(pageId, kind);
+        insertText.run(id, pageId, kind, body, search, loose);
+        insertExact.run(id, search);
+        insertLoose.run(id, loose);
       }
     }
+    bumpGeneration(db);
   })();
 }

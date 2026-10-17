@@ -10,7 +10,8 @@
     "test": "vitest run",
     "index": "tsx scripts/index-tenders.ts",
     "measure:mixed": "tsx scripts/measure-mixed.ts",
-    "verify:index": "tsx scripts/verify-index.ts"
+    "verify:index": "tsx scripts/verify-index.ts",
+    "bench": "tsx scripts/bench-search.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

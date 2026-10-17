@@ -7,7 +7,7 @@ import {
   type SearchMode,
 } from "./normalize";
 import { buildSnippet, type SnippetPart } from "./snippet";
-import type { PageSource, TextKind } from "./schema";
+import { splitTextId, textId, type PageSource, type TextKind } from "./schema";
 
 /**
  * Searching the index. Deterministic by construction: a page is a hit if and
@@ -89,34 +89,23 @@ export function toFtsPhrase(prepared: string): string {
 }
 
 // Column and table names come from this fixed table, never from input.
+//
+// Only text-row ids come back from a match. A text row's id encodes its page
+// and which reading it is (see textId in schema.ts), so no join is needed to
+// know what matched: at 100k pages, joining every hit to its page row was
+// most of the time spent on a query matching many pages. ORDER BY rowid is
+// free here (both the index and the table are stored in rowid order) and
+// guarantees the order the grouping below relies on.
 const SQL_BY_MODE = {
   exact: {
-    indexed: `
-      SELECT p.id, p.doc_id, p.page_no, t.kind
-      FROM texts_exact f
-      JOIN texts t ON t.id = f.rowid
-      JOIN pages p ON p.id = t.page_id
-      WHERE texts_exact MATCH ?`,
-    scan: `
-      SELECT p.id, p.doc_id, p.page_no, t.kind
-      FROM texts t
-      JOIN pages p ON p.id = t.page_id
-      WHERE instr(t.search, ?) > 0`,
-    filename: `SELECT id FROM documents WHERE instr(filename_search, ?) > 0`,
+    indexed: "SELECT rowid FROM texts_exact WHERE texts_exact MATCH ? ORDER BY rowid",
+    scan: "SELECT id FROM texts WHERE instr(search, ?) > 0 ORDER BY id",
+    filename: "SELECT id FROM documents WHERE instr(filename_search, ?) > 0",
   },
   loose: {
-    indexed: `
-      SELECT p.id, p.doc_id, p.page_no, t.kind
-      FROM texts_loose f
-      JOIN texts t ON t.id = f.rowid
-      JOIN pages p ON p.id = t.page_id
-      WHERE texts_loose MATCH ?`,
-    scan: `
-      SELECT p.id, p.doc_id, p.page_no, t.kind
-      FROM texts t
-      JOIN pages p ON p.id = t.page_id
-      WHERE instr(t.loose, ?) > 0`,
-    filename: `SELECT id FROM documents WHERE instr(filename_loose, ?) > 0`,
+    indexed: "SELECT rowid FROM texts_loose WHERE texts_loose MATCH ? ORDER BY rowid",
+    scan: "SELECT id FROM texts WHERE instr(loose, ?) > 0 ORDER BY id",
+    filename: "SELECT id FROM documents WHERE instr(filename_loose, ?) > 0",
   },
 } as const;
 
@@ -124,41 +113,93 @@ interface Statements {
   indexed: Record<SearchMode, Database.Statement>;
   scan: Record<SearchMode, Database.Statement>;
   filename: Record<SearchMode, Database.Statement>;
+  generation: Database.Statement;
   documents: Database.Statement;
+  pages: Database.Statement;
   page: Database.Statement;
   texts: Database.Statement;
 }
 
+/**
+ * Which document each page belongs to and its page number, held in memory as
+ * two flat arrays indexed by page id, plus each document's filename and its
+ * position in filename order. A few bytes per page: about 1 MB at 100k pages.
+ *
+ * Reloaded whenever the index's generation counter changes, which the
+ * indexer bumps in every write transaction, so it can never describe an
+ * older index than the one being searched.
+ */
+interface PageMap {
+  generation: string;
+  pageDoc: Int32Array;
+  pageNo: Int32Array;
+  filename: Map<number, string>;
+  rank: Map<number, number>;
+}
+
+interface Cache {
+  statements: Statements;
+  pageMap: PageMap | null;
+}
+
 // Preparing a statement parses the SQL; doing that once per connection
 // rather than once per search keeps small queries well under a millisecond.
-const statementCache = new WeakMap<Database.Database, Statements>();
+const cache = new WeakMap<Database.Database, Cache>();
 
-function statements(db: Database.Database): Statements {
-  let s = statementCache.get(db);
-  if (!s) {
+function connectionCache(db: Database.Database): Cache {
+  let c = cache.get(db);
+  if (!c) {
     const byMode = (key: "indexed" | "scan" | "filename") => ({
-      exact: db.prepare(SQL_BY_MODE.exact[key]).raw(),
-      loose: db.prepare(SQL_BY_MODE.loose[key]).raw(),
+      exact: db.prepare(SQL_BY_MODE.exact[key]).pluck(),
+      loose: db.prepare(SQL_BY_MODE.loose[key]).pluck(),
     });
-    s = {
-      indexed: byMode("indexed"),
-      scan: byMode("scan"),
-      filename: byMode("filename"),
-      documents: db.prepare("SELECT id, filename FROM documents"),
-      page: db.prepare("SELECT page_label, source FROM pages WHERE id = ?"),
-      texts: db.prepare("SELECT kind, body FROM texts WHERE page_id = ? ORDER BY kind"),
+    c = {
+      statements: {
+        indexed: byMode("indexed"),
+        scan: byMode("scan"),
+        filename: byMode("filename"),
+        generation: db.prepare("SELECT value FROM meta WHERE key = 'generation'").pluck(),
+        documents: db.prepare("SELECT id, filename FROM documents"),
+        pages: db.prepare("SELECT id, doc_id, page_no FROM pages").raw(),
+        page: db.prepare("SELECT page_label, source FROM pages WHERE id = ?"),
+        texts: db.prepare("SELECT id, body FROM texts WHERE id BETWEEN ? AND ?"),
+      },
+      pageMap: null,
     };
-    statementCache.set(db, s);
+    cache.set(db, c);
   }
-  return s;
+  return c;
 }
 
-interface PageMatch {
-  pageId: number;
-  docId: number;
-  pageNo: number;
-  kinds: Set<TextKind>;
+function pageMap(c: Cache): PageMap {
+  const s = c.statements;
+  const generation = String(s.generation.get() ?? "");
+  if (c.pageMap && c.pageMap.generation === generation) return c.pageMap;
+
+  const rows = s.pages.all() as Array<[id: number, docId: number, pageNo: number]>;
+  const maxId = rows.reduce((m, [id]) => Math.max(m, id), 0);
+  const pageDoc = new Int32Array(maxId + 1);
+  const pageNo = new Int32Array(maxId + 1);
+  for (const [id, docId, no] of rows) {
+    pageDoc[id] = docId;
+    pageNo[id] = no;
+  }
+
+  const docs = s.documents.all() as Array<{ id: number; filename: string }>;
+  docs.sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : a.id - b.id));
+  c.pageMap = {
+    generation,
+    pageDoc,
+    pageNo,
+    filename: new Map(docs.map((d) => [d.id, d.filename])),
+    rank: new Map(docs.map((d, i) => [d.id, i])),
+  };
+  return c.pageMap;
 }
+
+// Bit flags for which readings of a page matched.
+const LAYER = 1;
+const OCR = 2;
 
 export function search(
   db: Database.Database,
@@ -169,73 +210,94 @@ export function search(
   const { mode, offset, limit } = options;
   const prepared = prepareQuery(rawQuery, mode);
   const usedFullScan = codePointLength(prepared) < MIN_INDEXED_QUERY_CHARS;
-  const s = statements(db);
+  const c = connectionCache(db);
+  const s = c.statements;
+  const map = pageMap(c);
 
   // An empty prepared query (e.g. "///" in loose mode) can't match anything
   // meaningful; instr() with "" would match every page, so stop here.
-  const rows = (
+  const textIds = (
     prepared === ""
       ? []
       : usedFullScan
         ? s.scan[mode].all(prepared)
         : s.indexed[mode].all(toFtsPhrase(prepared))
-  ) as Array<[pageId: number, docId: number, pageNo: number, kind: TextKind]>;
+  ) as number[];
 
-  // A page can match through its text layer, its OCR text, or both; it is
-  // one hit either way.
-  const pages = new Map<number, PageMatch>();
-  for (const [pageId, docId, pageNo, kind] of rows) {
-    const existing = pages.get(pageId);
-    if (existing) existing.kinds.add(kind);
-    else pages.set(pageId, { pageId, docId, pageNo, kinds: new Set([kind]) });
+  // Group matched text rows into pages, and pages into documents. Ids arrive
+  // in ascending order, so a page's two readings are adjacent and each
+  // document's pages come out in page order.
+  const pagesByDoc = new Map<number, Array<{ pageId: number; readings: number }>>();
+  let last: { pageId: number; readings: number } | null = null;
+  let totalPages = 0;
+  for (const id of textIds) {
+    const { pageId, kind } = splitTextId(id);
+    const reading = kind === "ocr" ? OCR : LAYER;
+    if (last && last.pageId === pageId) {
+      last.readings |= reading;
+      continue;
+    }
+    last = { pageId, readings: reading };
+    const docId = map.pageDoc[pageId];
+    let list = pagesByDoc.get(docId);
+    if (!list) pagesByDoc.set(docId, (list = []));
+    list.push(last);
+    totalPages++;
   }
 
   const filenameIds = new Set<number>(
-    prepared === "" ? [] : s.filename[mode].all(prepared).map((r) => (r as [number])[0])
+    prepared === "" ? [] : (s.filename[mode].all(prepared) as number[])
   );
 
-  const allDocs = s.documents.all() as Array<{ id: number; filename: string }>;
-  const filenameOf = new Map(allDocs.map((d) => [d.id, d.filename]));
+  const docOrder = [...new Set([...pagesByDoc.keys(), ...filenameIds])].sort(
+    (a, b) => map.rank.get(a)! - map.rank.get(b)!
+  );
 
-  const hitCounts = new Map<number, number>();
-  for (const p of pages.values()) {
-    hitCounts.set(p.docId, (hitCounts.get(p.docId) ?? 0) + 1);
+  const documents: DocumentSummary[] = docOrder.map((docId) => ({
+    docId,
+    filename: map.filename.get(docId)!,
+    hitCount: pagesByDoc.get(docId)?.length ?? 0,
+    filenameMatch: filenameIds.has(docId),
+  }));
+
+  // Walk documents in filename order and take only the requested window of
+  // hits; pages outside it are counted above but never loaded.
+  const window: Array<{ docId: number; pageId: number; readings: number }> = [];
+  let skipped = 0;
+  for (const docId of docOrder) {
+    const list = pagesByDoc.get(docId);
+    if (!list) continue;
+    if (skipped + list.length <= offset) {
+      skipped += list.length;
+      continue;
+    }
+    for (let i = Math.max(0, offset - skipped); i < list.length && window.length < limit; i++) {
+      window.push({ docId, ...list[i] });
+    }
+    skipped += list.length;
+    if (window.length >= limit) break;
   }
 
-  const byFilename = (a: number, b: number) => {
-    const fa = filenameOf.get(a)!;
-    const fb = filenameOf.get(b)!;
-    return fa < fb ? -1 : fa > fb ? 1 : a - b;
-  };
-
-  const documents: DocumentSummary[] = [...new Set([...hitCounts.keys(), ...filenameIds])]
-    .sort(byFilename)
-    .map((docId) => ({
-      docId,
-      filename: filenameOf.get(docId)!,
-      hitCount: hitCounts.get(docId) ?? 0,
-      filenameMatch: filenameIds.has(docId),
-    }));
-
-  const ordered = [...pages.values()].sort(
-    (a, b) => byFilename(a.docId, b.docId) || a.pageNo - b.pageNo
-  );
-
-  const hits: PageHit[] = ordered.slice(offset, offset + limit).map((m) => {
-    const page = s.page.get(m.pageId) as { page_label: string | null; source: PageSource };
-    const texts = s.texts.all(m.pageId) as Array<{ kind: TextKind; body: string }>;
-    const matchedIn = (["layer", "ocr"] as const).filter((k) => m.kinds.has(k));
+  const hits: PageHit[] = window.map(({ docId, pageId, readings }) => {
+    const page = s.page.get(pageId) as { page_label: string | null; source: PageSource };
+    const texts = s.texts.all(textId(pageId, "layer"), textId(pageId, "ocr")) as Array<{
+      id: number;
+      body: string;
+    }>;
+    const matchedIn: TextKind[] = [];
+    if (readings & LAYER) matchedIn.push("layer");
+    if (readings & OCR) matchedIn.push("ocr");
     // Prefer the text layer for the snippet: it is what the PDF actually
     // says, where OCR is a reading of it.
-    const snippetSource = texts.find((t) => t.kind === matchedIn[0])!;
+    const snippetSource = texts.find((t) => t.id === textId(pageId, matchedIn[0]))!;
     return {
-      docId: m.docId,
-      filename: filenameOf.get(m.docId)!,
-      pageNo: m.pageNo,
+      docId,
+      filename: map.filename.get(docId)!,
+      pageNo: map.pageNo[pageId],
       pageLabel: page.page_label,
       source: page.source,
-      matchedIn: [...matchedIn],
-      ocrOnly: matchedIn.length === 1 && matchedIn[0] === "ocr",
+      matchedIn,
+      ocrOnly: readings === OCR,
       snippet: buildSnippet(snippetSource.body, prepared, mode),
     };
   });
@@ -245,13 +307,13 @@ export function search(
     mode,
     prepared,
     usedFullScan,
-    totalPages: pages.size,
-    totalDocuments: hitCounts.size,
+    totalPages,
+    totalDocuments: pagesByDoc.size,
     documents,
     hits,
     offset,
     limit,
-    hasMore: offset + limit < ordered.length,
+    hasMore: offset + hits.length < totalPages,
     tookMs: performance.now() - started,
   };
 }
