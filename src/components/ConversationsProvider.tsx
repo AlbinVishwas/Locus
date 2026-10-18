@@ -16,6 +16,7 @@ import {
 } from "@/lib/conversations";
 import { loadConversations, saveConversations } from "@/lib/storage";
 import type { Conversation, DisplayMessage } from "@/lib/types";
+import { deleteConversationFiles } from "@/lib/uploadsClient";
 
 const PERSIST_DEBOUNCE_MS = 500;
 
@@ -151,7 +152,14 @@ export function ConversationsProvider({ children }: { children: React.ReactNode 
 
   const newConversation = useCallback(() => dispatch({ type: "create" }), []);
   const selectConversation = useCallback((id: string) => dispatch({ type: "select", id }), []);
-  const deleteConversation = useCallback((id: string) => dispatch({ type: "delete", id }), []);
+  const deleteConversation = useCallback((id: string) => {
+    dispatch({ type: "delete", id });
+    // Fire-and-forget: the conversation disappears from the sidebar
+    // immediately regardless of how long server-side cleanup takes, and a
+    // failed request here (server unreachable, say) shouldn't block the
+    // local delete the user actually asked for.
+    void deleteConversationFiles(id);
+  }, []);
   const renameConversation = useCallback(
     (id: string, title: string) => dispatch({ type: "rename", id, title }),
     []

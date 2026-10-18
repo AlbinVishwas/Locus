@@ -46,3 +46,23 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
 }
+
+/* Loader.tsx's three-dot mark: the whole ring slowly rotates while each dot
+   breathes in and out of view, offset in time so they never dim together —
+   that offset is what reads as "orbiting" rather than just "spinning". */
+@keyframes loader-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes loader-dot-breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

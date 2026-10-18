@@ -1,19 +1,33 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ConversationFile } from "@/lib/uploadsClient";
+import AttachmentList, { type InProgressUpload } from "./AttachmentList";
 
 interface ChatInputProps {
   isStreaming: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
+  files: ConversationFile[];
+  uploading: InProgressUpload[];
+  onAttachFiles: (files: File[]) => void;
 }
 
 // ~8 lines at 15px / 1.7 line-height, plus the textarea's own padding.
 const MAX_TEXTAREA_HEIGHT = 214;
 
-export default function ChatInput({ isStreaming, onSend, onStop }: ChatInputProps) {
+export default function ChatInput({
+  isStreaming,
+  onSend,
+  onStop,
+  files,
+  uploading,
+  onAttachFiles,
+}: ChatInputProps) {
   const [value, setValue] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   // Coarse pointer (touch) means no Shift key to pair with Enter, so Enter
   // has to fall back to its native behavior (newline) instead of sending.
@@ -74,10 +88,52 @@ export default function ChatInput({ isStreaming, onSend, onStop }: ChatInputProp
     }
   };
 
+  const handleFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    onAttachFiles([...list].filter((f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")));
+  };
+
   return (
-    <div className="px-4 pb-6 pt-2 sm:px-6">
+    <div
+      className="px-4 pb-6 pt-2 sm:px-6"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        handleFiles(e.dataTransfer.files);
+      }}
+    >
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-end gap-2 rounded-3xl border border-line bg-surface px-4 py-2.5 shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
+        <AttachmentList files={files} uploading={uploading} />
+        <div
+          className={`flex items-end gap-2 rounded-3xl border bg-surface px-4 py-2.5 shadow-[0_2px_8px_rgba(0,0,0,0.35)] ${
+            isDragOver ? "border-secondary" : "border-line"
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf,.pdf"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach a PDF"
+            title="Attach a PDF"
+            className="mb-1 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-secondary hover:bg-surface-hover hover:text-primary"
+          >
+            <AttachIcon />
+          </button>
           <textarea
             ref={textareaRef}
             value={value}
@@ -86,7 +142,7 @@ export default function ChatInput({ isStreaming, onSend, onStop }: ChatInputProp
             onCompositionStart={() => (isComposingRef.current = true)}
             onCompositionEnd={() => (isComposingRef.current = false)}
             rows={1}
-            placeholder="Message"
+            placeholder={isDragOver ? "Drop a PDF to attach it" : "Message"}
             className="max-h-[214px] flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.7] text-primary outline-none placeholder:text-secondary"
           />
           <button
@@ -126,6 +182,23 @@ function StopIcon() {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
       <rect x="4" y="4" width="16" height="16" rx="2" />
+    </svg>
+  );
+}
+
+function AttachIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21.44 11.05 12.25 20.24a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95L9.47 17.36a1.5 1.5 0 0 1-2.12-2.12l8.49-8.48" />
     </svg>
   );
 }

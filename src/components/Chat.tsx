@@ -5,6 +5,12 @@ import { parseSSEStream } from "@/lib/parseSSE";
 import { createId } from "@/lib/id";
 import { toHistoryPayload } from "@/lib/history";
 import type { Conversation, DisplayMessage } from "@/lib/types";
+import {
+  listConversationFiles,
+  uploadFile,
+  type ConversationFile,
+} from "@/lib/uploadsClient";
+import type { InProgressUpload } from "./AttachmentList";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 
@@ -32,6 +38,54 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
   // on DisplayMessage: that gets persisted, and this describes a moment
   // rather than the message.
   const [fetchingUrls, setFetchingUrls] = useState<string[] | null>(null);
+
+  // This conversation's uploaded files (server-confirmed) and whatever's
+  // still being uploaded/indexed right now. Neither is persisted locally —
+  // files are refetched from the index on mount, and uploading is purely
+  // in-flight state — so there's nothing here for toHistoryPayload to
+  // worry about.
+  const [files, setFiles] = useState<ConversationFile[]>([]);
+  const [uploading, setUploading] = useState<InProgressUpload[]>([]);
+
+  const refreshFiles = useCallback(() => {
+    listConversationFiles(conversation.id).then(setFiles);
+  }, [conversation.id]);
+
+  useEffect(() => {
+    refreshFiles();
+  }, [refreshFiles]);
+
+  const handleAttachFiles = useCallback(
+    (toUpload: File[]) => {
+      for (const file of toUpload) {
+        const tempId = createId();
+        setUploading((prev) => [
+          ...prev,
+          { tempId, name: file.name, stage: { type: "stage", stage: "uploading" } },
+        ]);
+
+        uploadFile(conversation.id, file, (event) => {
+          setUploading((prev) => prev.map((u) => (u.tempId === tempId ? { ...u, stage: event } : u)));
+          if (event.type === "ready") {
+            refreshFiles();
+            setUploading((prev) => prev.filter((u) => u.tempId !== tempId));
+          }
+          // An error stays visible in the chip (stageLabel shows its
+          // message) rather than disappearing silently; the next attach
+          // or a conversation switch is what clears it.
+        }).catch(() => {
+          setUploading((prev) =>
+            prev.map((u) =>
+              u.tempId === tempId
+                ? { ...u, stage: { type: "error", message: "Upload failed" } }
+                : u
+            )
+          );
+        });
+      }
+    },
+    [conversation.id, refreshFiles]
+  );
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -146,7 +200,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: historyPayload }),
+          body: JSON.stringify({ messages: historyPayload, conversationId: conversation.id }),
           signal: controller.signal,
         });
 
@@ -165,6 +219,17 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
 
           if (event.type === "fetching") {
             setFetchingUrls(event.urls);
+          } else if (event.type === "searchResult") {
+            // Counts as visible output on its own: a search card the user
+            // can act on is a complete, useful turn even if the model
+            // itself fails right after (LM Studio down, say) -- it must
+            // survive the "nothing came back, drop this turn" check below.
+            hasVisibleOutput = true;
+            patchAssistantMessage(assistantId, (m) => ({
+              ...m,
+              searchResult: event.result,
+              looseAlternative: event.looseAlternative,
+            }));
           } else if (event.type === "reasoning") {
             hasVisibleOutput = true;
             if (reasoningStartedAt === null) reasoningStartedAt = performance.now();
@@ -231,7 +296,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         abortControllerRef.current = null;
       }
     },
-    [messages, isStreaming, commitMessages, patchAssistantMessage]
+    [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id]
   );
 
   const stopGeneration = useCallback(() => {
@@ -254,6 +319,9 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         isStreaming={isStreaming}
         onSend={sendMessage}
         onStop={stopGeneration}
+        files={files}
+        uploading={uploading}
+        onAttachFiles={handleAttachFiles}
       />
     </div>
   );

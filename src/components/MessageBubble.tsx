@@ -1,4 +1,5 @@
 import type { DisplayMessage } from "@/lib/types";
+import SearchResultCard from "./SearchResultCard";
 import ThinkingSection from "./ThinkingSection";
 import Markdown from "./Markdown";
 
@@ -30,6 +31,12 @@ export default function MessageBubble({
 
   return (
     <div className="w-full text-left">
+      {/* Search runs first, before the model generates anything, so its
+          result sits above the reply — the user's own files answering the
+          question, not the model describing them. */}
+      {message.searchResult && (
+        <SearchResultCard result={message.searchResult} looseAlternative={message.looseAlternative} />
+      )}
       {showThinking && (
         <ThinkingSection
           reasoning={message.reasoning}
