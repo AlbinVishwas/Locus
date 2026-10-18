@@ -61,6 +61,7 @@ Other commands:
 | `npm run verify:index` | Compares the real index against a brute-force scan on ~2000 queries |
 | `npm run measure:mixed` | One-off audit: OCRs every text page to find text missing from the text layer |
 | `npm run bench` | Builds a 100,000-page synthetic index and reports size and p50/p95 latency |
+| `npm run share` | Builds, starts production mode with uploads enabled, and shares it over a public Cloudflare tunnel. See [docs/sharing.md](docs/sharing.md). |
 
 Indexer settings (environment variables, all optional):
 
