@@ -24,6 +24,14 @@ export interface SearchOptions {
   /** Pagination over hits (pages), ordered by filename then page number. */
   offset: number;
   limit: number;
+  /**
+   * Which documents are in scope: `null` is the standalone tender corpus
+   * (conversation_id IS NULL in the index), a string is one chat
+   * conversation's uploads. Omitted entirely means "every document,
+   * regardless of scope" — only ever used by tests and the brute-force
+   * oracle, which intentionally don't care about scoping.
+   */
+  scope?: string | null;
 }
 
 export interface DocumentSummary {
@@ -135,6 +143,8 @@ interface PageMap {
   pageNo: Int32Array;
   filename: Map<number, string>;
   rank: Map<number, number>;
+  /** docId -> its conversation scope (null = tender corpus). */
+  scope: Map<number, string | null>;
 }
 
 interface Cache {
@@ -159,7 +169,7 @@ function connectionCache(db: Database.Database): Cache {
         scan: byMode("scan"),
         filename: byMode("filename"),
         generation: db.prepare("SELECT value FROM meta WHERE key = 'generation'").pluck(),
-        documents: db.prepare("SELECT id, filename FROM documents"),
+        documents: db.prepare("SELECT id, filename, conversation_id as conversationId FROM documents"),
         pages: db.prepare("SELECT id, doc_id, page_no FROM pages").raw(),
         page: db.prepare("SELECT page_label, source FROM pages WHERE id = ?"),
         texts: db.prepare("SELECT id, body FROM texts WHERE id BETWEEN ? AND ?"),
@@ -185,7 +195,11 @@ function pageMap(c: Cache): PageMap {
     pageNo[id] = no;
   }
 
-  const docs = s.documents.all() as Array<{ id: number; filename: string }>;
+  const docs = s.documents.all() as Array<{
+    id: number;
+    filename: string;
+    conversationId: string | null;
+  }>;
   docs.sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : a.id - b.id));
   c.pageMap = {
     generation,
@@ -193,6 +207,7 @@ function pageMap(c: Cache): PageMap {
     pageNo,
     filename: new Map(docs.map((d) => [d.id, d.filename])),
     rank: new Map(docs.map((d, i) => [d.id, i])),
+    scope: new Map(docs.map((d) => [d.id, d.conversationId])),
   };
   return c.pageMap;
 }
@@ -208,11 +223,17 @@ export function search(
 ): SearchResult {
   const started = performance.now();
   const { mode, offset, limit } = options;
+  // `scope` absent (not even `null`) means "don't filter at all" -- only
+  // the oracle and a couple of tests want that; every real caller passes
+  // either a conversation id or `null` for the tender corpus.
+  const scoped = "scope" in options;
+  const scope = options.scope ?? null;
   const prepared = prepareQuery(rawQuery, mode);
   const usedFullScan = codePointLength(prepared) < MIN_INDEXED_QUERY_CHARS;
   const c = connectionCache(db);
   const s = c.statements;
   const map = pageMap(c);
+  const inScope = (docId: number) => !scoped || map.scope.get(docId) === scope;
 
   // An empty prepared query (e.g. "///" in loose mode) can't match anything
   // meaningful; instr() with "" would match every page, so stop here.
@@ -239,6 +260,7 @@ export function search(
     }
     last = { pageId, readings: reading };
     const docId = map.pageDoc[pageId];
+    if (!inScope(docId)) continue;
     let list = pagesByDoc.get(docId);
     if (!list) pagesByDoc.set(docId, (list = []));
     list.push(last);
@@ -246,7 +268,9 @@ export function search(
   }
 
   const filenameIds = new Set<number>(
-    prepared === "" ? [] : (s.filename[mode].all(prepared) as number[])
+    prepared === ""
+      ? []
+      : (s.filename[mode].all(prepared) as number[]).filter(inScope)
   );
 
   const docOrder = [...new Set([...pagesByDoc.keys(), ...filenameIds])].sort(

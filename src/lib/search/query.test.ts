@@ -8,7 +8,12 @@ import {
   viaIndex,
   type Corpus,
 } from "../../../scripts/indexer/oracle";
-import { openIndex, replaceDocument, type ExtractedPage } from "../../../scripts/indexer/store";
+import {
+  insertUploadedDocument,
+  openIndex,
+  replaceDocument,
+  type ExtractedPage,
+} from "../../../scripts/indexer/store";
 import { search, toFtsPhrase } from "./query";
 
 /**
@@ -227,5 +232,80 @@ describe("search: brute-force ground truth", () => {
     expect(result.totalPages).toBe(1);
     expect(result.hits[0].matchedIn).toEqual(["layer", "ocr"]);
     expect(result.hits[0].ocrOnly).toBe(false);
+  });
+});
+
+describe("search: conversation scoping", () => {
+  beforeAll(() => {
+    insertUploadedDocument(db, {
+      conversationId: "conv-scope-test",
+      originalFilename: "Uploaded.pdf",
+      storedFilename: "uploaded-scope-test.pdf",
+      sha256: "scope-test-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "test",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      pages: [
+        {
+          pageNo: 1,
+          pageLabel: null,
+          source: "text",
+          ocrReason: null,
+          imageCoverage: 0,
+          layerText: "aardvark lemur capybara",
+          ocrText: null,
+          error: null,
+        },
+      ],
+    });
+  });
+
+  it("scope: null (the tender corpus) never sees an uploaded document", () => {
+    const result = search(db, "aardvark lemur", { mode: "exact", offset: 0, limit: 10, scope: null });
+    expect(result.hits).toHaveLength(0);
+  });
+
+  it("scope: <conversationId> sees only that conversation's upload", () => {
+    const result = search(db, "aardvark lemur", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "conv-scope-test",
+    });
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0].filename).toBe("uploaded-scope-test.pdf");
+  });
+
+  it("a different conversation's scope sees neither the upload nor the tender corpus", () => {
+    const result = search(db, "aardvark lemur", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "some-other-conversation",
+    });
+    expect(result.hits).toHaveLength(0);
+
+    const tenderQuery = search(db, "tender", { mode: "exact", offset: 0, limit: 10, scope: "conv-scope-test" });
+    expect(tenderQuery.hits).toHaveLength(0);
+  });
+
+  it("omitting scope entirely still searches everything, tender corpus and uploads alike", () => {
+    const result = search(db, "aardvark lemur", { mode: "exact", offset: 0, limit: 10 });
+    expect(result.hits).toHaveLength(1);
+  });
+
+  it("a filename match respects scope too", () => {
+    const scoped = search(db, "uploaded-scope-test", { mode: "exact", offset: 0, limit: 10, scope: null });
+    expect(scoped.documents).toHaveLength(0);
+
+    const inScope = search(db, "uploaded-scope-test", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "conv-scope-test",
+    });
+    expect(inScope.documents).toHaveLength(1);
   });
 });

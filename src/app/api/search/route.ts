@@ -42,7 +42,11 @@ export async function POST(req: Request) {
   const { query, mode, offset, limit } = validation.request;
 
   try {
-    const result = search(getIndexDb(), query, { mode, offset, limit });
+    // Scoped to the standalone tender corpus (conversation_id IS NULL).
+    // This route is the old debug/search page, not the in-chat document
+    // search -- that calls search() directly from the chat route with the
+    // conversation's own scope, in-process.
+    const result = search(getIndexDb(), query, { mode, offset, limit, scope: null });
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     if (err instanceof IndexUnavailableError) {

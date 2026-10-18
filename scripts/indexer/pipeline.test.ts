@@ -120,7 +120,7 @@ describe.skipIf(skip)("indexer pipeline", () => {
     const report = buildReport(config().indexPath);
     const alpha = report.documents.find((d) => d.filename === "alpha.pdf")!;
     expect(alpha.pageCount).toBe(4);
-    expect(alpha.bySource).toEqual({ text: 1, "text+ocr": 1, ocr: 1, blank: 1, failed: 0 });
+    expect(alpha.bySource).toEqual({ text: 1, "text+ocr": 1, ocr: 1, blank: 1, failed: 0, "pending-ocr": 0 });
     expect(alpha.ocrPages.map((p) => [p.pageNo, p.reason])).toEqual([
       [2, "no-text-layer"],
       [4, "image-coverage"],
@@ -263,7 +263,7 @@ describe.skipIf(skip)("indexer pipeline", () => {
     expect(summary.updated.sort()).toEqual(["alpha-renamed.pdf", "beta.pdf", "corrupt.pdf"]);
     const alpha = buildReport(config().indexPath).documents.find((d) => d.filename === "alpha-renamed.pdf")!;
     // Page 1 (plain text) is now OCR'd too; the blank page still isn't.
-    expect(alpha.bySource).toEqual({ text: 0, "text+ocr": 2, ocr: 1, blank: 1, failed: 0 });
+    expect(alpha.bySource).toEqual({ text: 0, "text+ocr": 2, ocr: 1, blank: 1, failed: 0, "pending-ocr": 0 });
     expect(alpha.ocrPages.map((p) => [p.pageNo, p.reason])).toEqual([
       [1, "all-pages"],
       [2, "no-text-layer"],
@@ -306,7 +306,7 @@ describe.skipIf(skip)("indexer pipeline: failures", () => {
 
     await runIndexer(c, quiet);
     const gamma = buildReport(c.indexPath).documents[0];
-    expect(gamma.bySource).toEqual({ text: 1, "text+ocr": 0, ocr: 0, blank: 0, failed: 2 });
+    expect(gamma.bySource).toEqual({ text: 1, "text+ocr": 0, ocr: 0, blank: 0, failed: 2, "pending-ocr": 0 });
     expect(gamma.failedPages.map((p) => p.pageNo)).toEqual([2, 3]);
     expect(gamma.failedPages[0].error).toContain("ocr: tesseract failed");
 

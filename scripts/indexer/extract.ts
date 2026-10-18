@@ -27,6 +27,14 @@ export interface ExtractContext {
   tempDir: string;
   log: (message: string) => void;
   stats: { ocrRun: number; ocrCached: number };
+  /**
+   * Stop short of running OCR: a page that needs it comes back with source
+   * 'pending-ocr' instead of 'ocr'/'text+ocr'. Used for uploads, where OCR
+   * runs afterwards as a background queue so a slow page doesn't hold up
+   * the rest of the document (or the other pages' text-layer search
+   * results) from being written and searchable immediately.
+   */
+  skipOcr?: boolean;
 }
 
 function message(err: unknown): string {
@@ -164,6 +172,10 @@ export async function extractDocument(
 
       if (!plan.ocrReason) return page;
 
+      if (ctx.skipOcr) {
+        return { ...page, source: "pending-ocr" };
+      }
+
       try {
         const ocrText = await ocrPage(file, sha256, pageNo, ctx);
         const source: PageSource = plan.ocrReason === "no-text-layer" ? "ocr" : "text+ocr";
@@ -182,4 +194,9 @@ export async function extractDocument(
 
 function join(a: string | null, b: string): string {
   return a ? `${a}; ${b}` : b;
+}
+
+/** The final page source once a 'pending-ocr' page's OCR comes back with text. */
+export function sourceAfterOcr(ocrReason: OcrReason | null): PageSource {
+  return ocrReason === "no-text-layer" ? "ocr" : "text+ocr";
 }
