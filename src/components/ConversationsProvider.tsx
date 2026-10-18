@@ -15,6 +15,7 @@ import {
   deriveTitle,
 } from "@/lib/conversations";
 import { loadConversations, saveConversations } from "@/lib/storage";
+import { generateSmartTitle } from "@/lib/titleClient";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import { deleteConversationFiles } from "@/lib/uploadsClient";
 
@@ -32,7 +33,8 @@ type Action =
   | { type: "select"; id: string }
   | { type: "delete"; id: string }
   | { type: "rename"; id: string; title: string }
-  | { type: "updateMessages"; id: string; messages: DisplayMessage[] };
+  | { type: "updateMessages"; id: string; messages: DisplayMessage[] }
+  | { type: "upgradeTitle"; id: string; title: string };
 
 const initialState: State = {
   conversations: [],
@@ -86,8 +88,13 @@ function reducer(state: State, action: Action): State {
     }
 
     case "rename": {
+      // A title the user set by hand is never touched again -- not by the
+      // first-message fallback (title is already non-empty) and not by a
+      // later model-generated upgrade (see "upgradeTitle" below).
       const conversations = state.conversations.map((c) =>
-        c.id === action.id ? { ...c, title: action.title, updatedAt: Date.now() } : c
+        c.id === action.id
+          ? { ...c, title: action.title, titleSource: "manual" as const, updatedAt: Date.now() }
+          : c
       );
       return { ...state, conversations };
     }
@@ -95,10 +102,30 @@ function reducer(state: State, action: Action): State {
     case "updateMessages": {
       const conversations = state.conversations.map((c) => {
         if (c.id !== action.id) return c;
-        // Auto-title fires once, from the first user message, and never
-        // again — an existing title is never overwritten.
-        const title = c.title || deriveTitle(action.messages);
-        return { ...c, messages: action.messages, title, updatedAt: Date.now() };
+        // The fast local fallback fires once, from the first user
+        // message, and never again -- an existing title is never
+        // overwritten here. The real phrase (see "upgradeTitle") arrives
+        // asynchronously, from a separate call the caller kicks off.
+        if (c.title) return { ...c, messages: action.messages, updatedAt: Date.now() };
+        return {
+          ...c,
+          messages: action.messages,
+          title: deriveTitle(action.messages),
+          titleSource: "auto-raw" as const,
+          updatedAt: Date.now(),
+        };
+      });
+      return { ...state, conversations };
+    }
+
+    case "upgradeTitle": {
+      const conversations = state.conversations.map((c) => {
+        // Skip a conversation that was renamed by hand, or already has
+        // the smart title, while this request was in flight.
+        if (c.id !== action.id || c.titleSource === "manual" || c.titleSource === "auto-smart") {
+          return c;
+        }
+        return { ...c, title: action.title, titleSource: "auto-smart" as const };
       });
       return { ...state, conversations };
     }
@@ -126,12 +153,46 @@ const ConversationsContext = createContext<ConversationsContextValue | null>(nul
 export function ConversationsProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
+  // Fire-and-forget: asks the model for a short topic phrase for a
+  // conversation's first message, then upgrades its title once that
+  // comes back (see the "upgradeTitle" reducer case, which skips a
+  // conversation renamed by hand in the meantime). A slow or unreachable
+  // LM Studio just means the fast local title (deriveTitle) stands as the
+  // permanent one -- never a blocked sidebar.
+  //
+  // Deduped per id for the life of this provider, in a ref rather than
+  // state the request itself is never rendered: updateActiveMessages
+  // below fires on every streamed token, and without this a burst of
+  // calls before conversationsRef catches up to the just-dispatched title
+  // would otherwise request the same upgrade many times over.
+  const requestedTitleUpgradeIds = useRef(new Set<string>());
+  const requestTitleUpgrade = useCallback((id: string, firstMessage: string) => {
+    if (requestedTitleUpgradeIds.current.has(id)) return;
+    requestedTitleUpgradeIds.current.add(id);
+    generateSmartTitle(firstMessage).then((title) => {
+      if (title) dispatch({ type: "upgradeTitle", id, title });
+    });
+  }, []);
+
   // Read localStorage only after mount, never during render. The first
   // render (server + first client hydration pass) always shows the empty
   // initialState above, so there's nothing for hydration to mismatch —
   // real data arrives one tick later via a normal client-side update.
   useEffect(() => {
-    dispatch({ type: "hydrate", conversations: loadConversations() });
+    const loaded = loadConversations();
+    dispatch({ type: "hydrate", conversations: loaded });
+
+    // Retroactively upgrades any conversation still on its raw-text
+    // title -- including every one saved before this feature existed,
+    // which has no titleSource at all and so reads the same as
+    // "auto-raw" here. Runs once per load, not on every render: this
+    // effect has an empty dependency array.
+    for (const c of loaded) {
+      if (c.titleSource === "manual" || c.titleSource === "auto-smart") continue;
+      const firstUser = c.messages.find((m) => m.role === "user");
+      if (firstUser) requestTitleUpgrade(c.id, firstUser.content);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Debounced persistence: token-by-token streaming updates conversations
@@ -169,11 +230,27 @@ export function ConversationsProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     activeConversationIdRef.current = state.activeConversationId;
   }, [state.activeConversationId]);
-  const updateActiveMessages = useCallback((messages: DisplayMessage[]) => {
-    const id = activeConversationIdRef.current;
-    if (!id) return;
-    dispatch({ type: "updateMessages", id, messages });
-  }, []);
+  // Mirrors state.conversations the same way activeConversationIdRef
+  // mirrors activeConversationId: so updateActiveMessages (called on every
+  // streamed token) can check "did this conversation already have a
+  // title" without needing state in its own dependency array.
+  const conversationsRef = useRef(state.conversations);
+  useEffect(() => {
+    conversationsRef.current = state.conversations;
+  }, [state.conversations]);
+  const updateActiveMessages = useCallback(
+    (messages: DisplayMessage[]) => {
+      const id = activeConversationIdRef.current;
+      if (!id) return;
+      const hadTitle = !!conversationsRef.current.find((c) => c.id === id)?.title;
+      dispatch({ type: "updateMessages", id, messages });
+      if (!hadTitle) {
+        const firstUser = messages.find((m) => m.role === "user");
+        if (firstUser) requestTitleUpgrade(id, firstUser.content);
+      }
+    },
+    [requestTitleUpgrade]
+  );
 
   const activeConversation =
     state.conversations.find((c) => c.id === state.activeConversationId) ??

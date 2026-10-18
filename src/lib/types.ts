@@ -69,6 +69,14 @@ export interface Conversation {
   id: string;
   /** Empty until derived from the first user message. */
   title: string;
+  /**
+   * Where `title` came from, so a later automatic upgrade never clobbers
+   * a title the user actually chose, and a title already upgraded to a
+   * model-generated phrase doesn't get re-requested on every reload.
+   * Undefined (an older, already-persisted conversation) is treated the
+   * same as "auto-raw" -- eligible for the one-time upgrade.
+   */
+  titleSource?: "manual" | "auto-raw" | "auto-smart";
   messages: DisplayMessage[];
   createdAt: number;
   updatedAt: number;

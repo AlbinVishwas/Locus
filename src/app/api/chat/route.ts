@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
@@ -8,6 +7,7 @@ import { DOCUMENT_SEARCH_SYSTEM_NOTE, runDocumentSearch } from "@/lib/chat/docum
 import { shouldSuppressReasoning, withReasoningSuppressed } from "@/lib/chat/reasoning";
 import { validateChatRequest } from "@/lib/chatRequest";
 import { describeLmStudioError } from "@/lib/lmStudioError";
+import { lmStudioClient } from "@/lib/lmStudioClient";
 import {
   buildUrlContextPrompt,
   extractUrls,
@@ -29,21 +29,8 @@ export const maxDuration = 120;
  */
 const REQUEST_TIMEOUT_MS = Number(process.env.LM_STUDIO_TIMEOUT_MS ?? 120_000);
 
-/**
- * Built per request, not once at module scope. Reading the env inside the
- * handler means editing .env.local takes effect on the next message instead
- * of on the next full server restart — which matters most when the base URL
- * is a tunnel whose address changes.
- */
 function lmStudio() {
-  const baseURL = process.env.LM_STUDIO_BASE_URL ?? "http://localhost:1234/v1";
-  const model = process.env.LM_STUDIO_MODEL ?? "qwen/qwen3-4b";
-  const client = new OpenAI({
-    baseURL,
-    apiKey: "lm-studio", // LM Studio ignores the value but the SDK requires one
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  return { client, model, baseURL };
+  return lmStudioClient(REQUEST_TIMEOUT_MS);
 }
 
 // LM Studio (via its reasoning-capable models, e.g. Qwen3) adds a
