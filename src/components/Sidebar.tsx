@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useConversations } from "./ConversationsProvider";
 import ConversationItem from "./ConversationItem";
 
@@ -50,6 +49,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           isOpen ? "translate-x-0" : "-translate-x-full"
         } ${isOpen ? "md:translate-x-0" : "md:-translate-x-full"}`}
       >
+        <div className="px-3 pt-3 text-[13px] font-medium tracking-wide text-primary">
+          Assay
+        </div>
+
         <div className="flex items-center gap-1 p-3">
           <button
             type="button"
@@ -67,16 +70,6 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           >
             <PanelIcon />
           </button>
-        </div>
-
-        <div className="px-3 pb-2">
-          <Link
-            href="/search"
-            className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-primary hover:bg-surface-hover"
-          >
-            <SearchIcon />
-            Search documents
-          </Link>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-3">
@@ -115,25 +108,6 @@ function PlusIcon() {
     >
       <path d="M12 5v14" />
       <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="shrink-0"
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20 20-3.5-3.5" />
     </svg>
   );
 }

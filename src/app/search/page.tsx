@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import SearchView from "@/components/search/SearchView";
 
 export const metadata: Metadata = {
-  title: "Search · Chat",
+  title: "Search · Assay",
   description: "Full-text search over the indexed tender PDFs",
 };
 

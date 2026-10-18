@@ -3,8 +3,8 @@ import "./globals.css";
 import { ConversationsProvider } from "@/components/ConversationsProvider";
 
 export const metadata: Metadata = {
-  title: "Chat",
-  description: "A local chat interface for LM Studio",
+  title: "Assay",
+  description: "A local chat and document-search interface for LM Studio",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
