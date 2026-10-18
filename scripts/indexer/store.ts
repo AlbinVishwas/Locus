@@ -260,7 +260,11 @@ export function insertUploadedDocument(
 
   return db.transaction(() => {
     const pendingCount = doc.pages.filter((p) => p.source === "pending-ocr").length;
-    const filenameFolded = foldCase(normalizeText(doc.storedFilename));
+    // Indexed by the name the user actually gave it, not the content-
+    // addressed name on disk -- that's what a filename search should
+    // match against (see query.ts's display(), which shows the same
+    // original_filename for the same reason).
+    const filenameFolded = foldCase(normalizeText(doc.originalFilename));
     const docId = Number(
       insertDoc.run(
         doc.storedFilename,

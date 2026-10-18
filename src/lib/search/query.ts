@@ -169,7 +169,9 @@ function connectionCache(db: Database.Database): Cache {
         scan: byMode("scan"),
         filename: byMode("filename"),
         generation: db.prepare("SELECT value FROM meta WHERE key = 'generation'").pluck(),
-        documents: db.prepare("SELECT id, filename, conversation_id as conversationId FROM documents"),
+        documents: db.prepare(
+          "SELECT id, filename, original_filename as originalFilename, conversation_id as conversationId FROM documents"
+        ),
         pages: db.prepare("SELECT id, doc_id, page_no FROM pages").raw(),
         page: db.prepare("SELECT page_label, source FROM pages WHERE id = ?"),
         texts: db.prepare("SELECT id, body FROM texts WHERE id BETWEEN ? AND ?"),
@@ -198,14 +200,25 @@ function pageMap(c: Cache): PageMap {
   const docs = s.documents.all() as Array<{
     id: number;
     filename: string;
+    originalFilename: string | null;
     conversationId: string | null;
   }>;
-  docs.sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : a.id - b.id));
+  // The tender corpus has no original_filename (its own filename already
+  // is the display name); an upload's filename on disk is content-
+  // addressed and meaningless to show -- original_filename is what the
+  // user actually called it.
+  const display = (d: { filename: string; originalFilename: string | null }) =>
+    d.originalFilename ?? d.filename;
+  docs.sort((a, b) => {
+    const da = display(a);
+    const db_ = display(b);
+    return da < db_ ? -1 : da > db_ ? 1 : a.id - b.id;
+  });
   c.pageMap = {
     generation,
     pageDoc,
     pageNo,
-    filename: new Map(docs.map((d) => [d.id, d.filename])),
+    filename: new Map(docs.map((d) => [d.id, display(d)])),
     rank: new Map(docs.map((d, i) => [d.id, i])),
     scope: new Map(docs.map((d) => [d.id, d.conversationId])),
   };

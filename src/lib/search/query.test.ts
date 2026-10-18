@@ -275,7 +275,9 @@ describe("search: conversation scoping", () => {
       scope: "conv-scope-test",
     });
     expect(result.hits).toHaveLength(1);
-    expect(result.hits[0].filename).toBe("uploaded-scope-test.pdf");
+    // The original filename, not the content-addressed one on disk --
+    // that's what the user actually called it.
+    expect(result.hits[0].filename).toBe("Uploaded.pdf");
   });
 
   it("a different conversation's scope sees neither the upload nor the tender corpus", () => {
@@ -296,11 +298,11 @@ describe("search: conversation scoping", () => {
     expect(result.hits).toHaveLength(1);
   });
 
-  it("a filename match respects scope too", () => {
-    const scoped = search(db, "uploaded-scope-test", { mode: "exact", offset: 0, limit: 10, scope: null });
+  it("a filename match respects scope too, and matches the original filename, not the content-addressed one on disk", () => {
+    const scoped = search(db, "uploaded", { mode: "exact", offset: 0, limit: 10, scope: null });
     expect(scoped.documents).toHaveLength(0);
 
-    const inScope = search(db, "uploaded-scope-test", {
+    const inScope = search(db, "uploaded", {
       mode: "exact",
       offset: 0,
       limit: 10,
