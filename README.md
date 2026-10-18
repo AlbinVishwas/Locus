@@ -63,6 +63,7 @@ Other commands:
 | `npm run bench` | Builds a 100,000-page synthetic index and reports size and p50/p95 latency |
 | `npm run share` | Builds, starts production mode with uploads enabled, and shares it over a public Cloudflare tunnel. See [docs/sharing.md](docs/sharing.md). |
 | `npm run verify:no-data-leak` | After `npm run build`: confirms no file-tracing manifest references `data/` (client PDFs, the index, uploads never belong in a deployable bundle) |
+| `npm run e2e` | End to end through a real (headless) browser: login, upload, search, a files-less conversation, a normal chat message. Needs a server already running with `ASSAY_ENABLE_UPLOADS=true` and a known passcode: `E2E_BASE_URL=http://localhost:3000 E2E_PASSCODE=... npm run e2e` |
 
 Indexer settings (environment variables, all optional):
 
