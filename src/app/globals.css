@@ -61,8 +61,13 @@ html {
 /* One visible keyboard-focus treatment for every control, rather than
    leaving it to each component's own classes (and forgetting one). Mouse
    / touch interaction never shows this -- :focus-visible only fires for
-   keyboard (and other non-pointer) focus. */
-:focus-visible {
+   keyboard (and other non-pointer) focus.
+
+   Textareas are excluded: a typing space that's focused for the entire
+   time someone is composing a message would otherwise wear that ring
+   constantly, reading as a stray box around the text rather than a
+   focus cue -- the composer's own border already shows where it is. */
+:focus-visible:not(textarea) {
   outline: 2px solid var(--accent-cream);
   outline-offset: 2px;
   border-radius: 4px;
