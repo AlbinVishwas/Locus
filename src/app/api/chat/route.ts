@@ -5,6 +5,7 @@ import type {
 } from "openai/resources/chat/completions";
 import type { StreamEvent } from "@/lib/types";
 import { DOCUMENT_SEARCH_SYSTEM_NOTE, runDocumentSearch } from "@/lib/chat/documentSearch";
+import { shouldSuppressReasoning, withReasoningSuppressed } from "@/lib/chat/reasoning";
 import { validateChatRequest } from "@/lib/chatRequest";
 import { describeLmStudioError } from "@/lib/lmStudioError";
 import {
@@ -181,6 +182,10 @@ export async function POST(req: Request) {
           send({ type: "fetching", urls });
           const results = await fetchUrlContexts(urls, req.signal);
           outbound = withExpandedUserMessage(messages, results);
+        }
+
+        if (shouldSuppressReasoning(model)) {
+          outbound = withReasoningSuppressed(outbound);
         }
 
         // The note is prepended as its own system message, never mixed into

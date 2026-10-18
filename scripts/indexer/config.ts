@@ -83,7 +83,12 @@ export function loadConfig(cwd = process.cwd()): IndexerConfig {
       cwd,
       process.env.OCR_CACHE_PATH ?? path.join(path.dirname(indexPath), "ocr-cache.db")
     ),
-    ocrLang: process.env.OCR_LANG ?? "eng",
+    // Indian tender documents routinely carry Devanagari text (signature
+    // lines, stamps) that eng-only OCR reads as garbage; eng+hin reads it
+    // correctly and costs roughly 30-55% more time per page, only at
+    // upload/index time (see docs/tender-search-report.md and
+    // docs/locus-summary.md for the measurement this default is based on).
+    ocrLang: process.env.OCR_LANG ?? "eng+hin",
     ocrPages: ocrPagesSetting(),
     ocrDpi: num("OCR_DPI", 300),
     // Leave two cores for the OS and the dev server.
