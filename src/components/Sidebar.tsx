@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useConversations } from "./ConversationsProvider";
 import ConversationItem from "./ConversationItem";
 
@@ -11,12 +12,19 @@ interface SidebarProps {
 const MOBILE_QUERY = "(max-width: 767px)";
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const router = useRouter();
   const {
     conversations,
     activeConversationId,
     newConversation,
     selectConversation,
   } = useConversations();
+
+  const handleLogout = async () => {
+    await fetch("/api/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
 
   // Newest-active-first: a conversation you're mid-chat with should stay
   // near the top, not just the one you most recently created.
@@ -88,6 +96,16 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
           )}
         </nav>
+
+        <div className="border-t border-line p-3">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full cursor-pointer rounded-lg px-2.5 py-2 text-left text-[13px] text-secondary hover:bg-surface-hover"
+          >
+            Log out
+          </button>
+        </div>
       </aside>
     </>
   );

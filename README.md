@@ -13,6 +13,21 @@ development. A production deployment must explicitly set
 `LOCAL_CHAT_ENABLE_URL_CONTEXT=true`; do that only for a trusted local
 deployment, not a public service.
 
+## Access control
+
+Every page and API route requires a session, created by posting the right
+passcode to `/login`. There are no user accounts — one shared passcode, for
+sharing the app with a small group over a tunnel.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ASSAY_PASSCODE` | *(none)* | Required to let anyone log in. Unset means the app stays locked for everyone. |
+| `SESSION_SECRET` | *(generated at startup)* | Signs session cookies. Set it explicitly once you're sharing the app regularly — otherwise every restart logs everyone out. |
+| `SESSION_TTL_HOURS` | `168` (7 days) | How long a session lasts after logging in. |
+
+Login attempts are rate-limited (5 per 5 minutes per caller) and the passcode
+comparison is constant-time.
+
 ## Document search
 
 Full-text search over PDFs: type any text, get every document and page that
