@@ -2,7 +2,7 @@
 
 import { useCyclingWord } from "@/lib/useCyclingWord";
 import type { ConversationFile, UploadStageEvent } from "@/lib/uploadsClient";
-import Loader from "./Loader";
+import StageLine from "./StageLine";
 
 export interface InProgressUpload {
   tempId: string;
@@ -51,54 +51,87 @@ function cyclingWordsFor(stage: UploadStageEvent): string[] {
   }
 }
 
-function stageLabel(stage: UploadStageEvent, cycledWord: string): string {
-  if (stage.type === "error") return stage.message;
-  if (stage.type === "ready") return "Ready";
-  if (stage.stage === "running-ocr") return `Running OCR, page ${stage.page} of ${stage.totalPages}`;
-  return cycledWord;
-}
-
 function UploadingChip({ upload }: { upload: InProgressUpload }) {
-  const { stage } = upload;
+  const { stage, name } = upload;
   const isError = stage.type === "error";
+  const isOcr = stage.type === "stage" && stage.stage === "running-ocr";
   // Always called, every render, regardless of which stage is active --
   // React hooks can't be called conditionally. For a non-cycling stage the
-  // word list is a single space, so the hook still runs but stageLabel
+  // word list is a single space, so the hook still runs but the label
   // below never uses its output.
   const words = cyclingWordsFor(stage);
-  const cycledWord = useCyclingWord(words.length > 0 ? words : [" "]);
+  const cycledWord = useCyclingWord(words.length > 0 ? words : [" "]);
+
+  if (isError) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[13px] text-secondary">
+        <span className="max-w-[160px] truncate" title={name}>
+          {name}
+        </span>
+        <span>{stage.message}</span>
+      </div>
+    );
+  }
+
+  if (stage.type === "ready") {
+    // A beat between the server saying "ready" and the parent re-fetching
+    // the confirmed file list and dropping this chip -- shown as finished,
+    // not as a dangling "Ready" word with no stage line of its own.
+    return (
+      <div className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
+        <StageLine state="finished" label={name} />
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[13px] ${
-        isError ? "border-line text-secondary" : "border-line bg-surface text-primary"
-      }`}
-    >
-      {!isError && <Loader />}
-      <span className="max-w-[160px] truncate" title={upload.name}>
-        {upload.name}
-      </span>
-      <span className="text-secondary">{stageLabel(stage, cycledWord)}</span>
+    <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
+      <StageLine
+        state="active"
+        label={isOcr ? `Scanning page ${stage.page} of ${stage.totalPages}` : `${cycledWord} ${name}`}
+      />
+      {isOcr && (
+        <div className="h-1 w-40 overflow-hidden rounded-full bg-line" aria-hidden>
+          <div
+            className="h-full rounded-full bg-cream transition-[width] duration-300"
+            style={{ width: `${Math.round((stage.page / Math.max(1, stage.totalPages)) * 100)}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 function FileChip({ file }: { file: ConversationFile }) {
+  if (file.status === "failed") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[13px] text-secondary">
+        <DocumentIcon />
+        <span className="max-w-[160px] truncate" title={file.originalFilename}>
+          {file.originalFilename}
+        </span>
+        <span>Couldn&apos;t be read</span>
+      </div>
+    );
+  }
+
+  if (file.status === "indexing") {
+    return (
+      <div className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
+        <StageLine state="active" label={`Finishing OCR: ${file.originalFilename}`} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[13px] text-primary">
       <DocumentIcon />
       <span className="max-w-[160px] truncate" title={file.originalFilename}>
         {file.originalFilename}
       </span>
-      <span className="text-secondary">{fileStatusLabel(file)}</span>
+      <span className="text-secondary">{expiresLabel(file.expiresAt)}</span>
     </div>
   );
-}
-
-function fileStatusLabel(file: ConversationFile): string {
-  if (file.status === "failed") return "Couldn't be read";
-  if (file.status === "indexing") return "Finishing OCR…";
-  return expiresLabel(file.expiresAt);
 }
 
 function expiresLabel(expiresAt: string): string {

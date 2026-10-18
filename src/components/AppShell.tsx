@@ -43,7 +43,7 @@ export default function AppShell() {
 
       <div
         className={`h-dvh transition-[margin-left] duration-200 ease-in-out ${
-          isSidebarOpen ? "md:ml-[260px]" : "md:ml-0"
+          isSidebarOpen ? "md:ml-[248px]" : "md:ml-0"
         }`}
       >
         <Chat

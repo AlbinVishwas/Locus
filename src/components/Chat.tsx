@@ -11,6 +11,8 @@ import {
   type ConversationFile,
 } from "@/lib/uploadsClient";
 import type { InProgressUpload } from "./AttachmentList";
+import ConversationHeader from "./ConversationHeader";
+import EmptyState from "./EmptyState";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 
@@ -323,8 +325,27 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
     abortControllerRef.current?.abort();
   }, []);
 
+  // Nothing sent yet: a centered greeting + composer, no transcript and no
+  // pinned header -- same send/attach handlers as the normal view, just a
+  // different arrangement of them for a conversation with nothing in it.
+  if (messages.length === 0) {
+    return (
+      <div className="flex h-dvh flex-col bg-page text-primary">
+        <EmptyState
+          isStreaming={isStreaming}
+          onSend={sendMessage}
+          onStop={stopGeneration}
+          files={files}
+          uploading={uploading}
+          onAttachFiles={handleAttachFiles}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-dvh flex-col bg-page text-primary">
+      <ConversationHeader title={conversation.title} fileCount={files.length} />
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
@@ -333,6 +354,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         <MessageList
           messages={messages}
           fetchingUrls={fetchingUrls}
+          fileCount={files.length}
         />
       </div>
       <ChatInput

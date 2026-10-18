@@ -55,34 +55,42 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       />
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex h-dvh w-[260px] flex-col border-r border-line bg-sidebar transition-transform duration-200 ease-in-out ${
+        className={`fixed inset-y-0 left-0 z-40 flex h-dvh w-[248px] flex-col border-r border-line bg-sidebar transition-transform duration-200 ease-in-out ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         } ${isOpen ? "md:translate-x-0" : "md:-translate-x-full"}`}
       >
-        <div className="px-3 pt-3 text-[13px] font-medium tracking-wide text-primary">
-          Locus
-        </div>
-
-        <div className="flex items-center gap-1 p-3">
-          <button
-            type="button"
-            onClick={newConversation}
-            className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-primary hover:bg-surface-hover"
-          >
-            <PlusIcon />
-            New chat
-          </button>
+        <div className="flex items-center justify-between gap-2 px-3 pt-3">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <LogoMark />
+            <span className="truncate font-display text-[14px] font-semibold text-primary">
+              Locus
+            </span>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close sidebar"
+            aria-label="Collapse sidebar"
             className="shrink-0 cursor-pointer rounded-lg p-2 text-secondary hover:bg-surface-hover"
           >
             <PanelIcon />
           </button>
         </div>
 
+        <div className="p-3">
+          <button
+            type="button"
+            onClick={newConversation}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-primary hover:bg-surface-hover"
+          >
+            <PlusIcon />
+            New chat
+          </button>
+        </div>
+
         <nav className="flex-1 overflow-y-auto px-2 pb-3">
+          <p className="px-2.5 pb-1 text-[11px] font-medium tracking-wide text-secondary uppercase">
+            Recent
+          </p>
           {sorted.length === 0 ? (
             <p className="px-2.5 py-2 text-[13px] text-secondary">No conversations yet.</p>
           ) : (
@@ -100,7 +108,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </nav>
 
         <div className="border-t border-line p-3">
-          <StorageIndicator />
+          <StorageCard />
           <button
             type="button"
             onClick={handleLogout}
@@ -114,8 +122,18 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   );
 }
 
-/** "1.2 GB of 5 GB used" — quiet, no bar or color, just the number for whoever's sharing the machine to glance at. Renders nothing if uploads are disabled (the endpoint still answers, since measuring disk usage doesn't depend on the flag, but showing a cap for a feature that's off would be confusing) or the request fails. */
-function StorageIndicator() {
+/** The cream ring-and-dot mark: a small, consistent identity for the sidebar wordmark, reused nowhere else. Plain SVG, no icon font or image asset. */
+function LogoMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden className="shrink-0">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="var(--accent-cream)" strokeWidth="2" />
+      <circle cx="12" cy="12" r="3" fill="var(--accent-cream)" />
+    </svg>
+  );
+}
+
+/** Usage against the storage cap, with a thin cream bar, plus the retention policy in plain words -- so "why did my file disappear" is answered right where files get uploaded, not just in a doc. Renders nothing if uploads are disabled (the endpoint still answers, since measuring disk usage doesn't depend on the flag, but showing a cap for a feature that's off would be confusing) or the request fails. */
+function StorageCard() {
   const [info, setInfo] = useState<StorageInfo | null>(null);
 
   useEffect(() => {
@@ -124,10 +142,18 @@ function StorageIndicator() {
 
   if (!info) return null;
 
+  const pct = info.capBytes > 0 ? Math.min(100, (info.usedBytes / info.capBytes) * 100) : 0;
+
   return (
-    <p className="px-2.5 pb-1 text-[12px] text-secondary">
-      {formatGB(info.usedBytes)} GB of {formatGB(info.capBytes)} GB used
-    </p>
+    <div className="mb-1 px-2.5 pb-2">
+      <p className="text-[12px] text-secondary">
+        {formatGB(info.usedBytes)} GB of {formatGB(info.capBytes)} GB used
+      </p>
+      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-line" aria-hidden>
+        <div className="h-full rounded-full bg-cream" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="mt-1.5 text-[11px] text-secondary">Files are removed 14 days after upload.</p>
+    </div>
   );
 }
 

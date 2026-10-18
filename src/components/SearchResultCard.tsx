@@ -59,6 +59,7 @@ export default function SearchResultCard({ result, looseAlternative }: SearchRes
     <div className="mb-3 rounded-xl border border-line bg-surface p-3.5 text-[13px]">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-secondary">
         <p>
+          Found on{" "}
           <span className="text-primary">
             {shown.totalPages} {shown.totalPages === 1 ? "page" : "pages"}
           </span>{" "}
@@ -70,7 +71,9 @@ export default function SearchResultCard({ result, looseAlternative }: SearchRes
             </>
           )}
         </p>
-        <span className="tabular-nums">{formatMs(shown.tookMs)}</span>
+        <span className="tabular-nums">
+          {shown.mode === "exact" ? "Exact" : "Loose"} match · {formatMs(shown.tookMs)}
+        </span>
       </div>
 
       {showLoose && (
@@ -114,7 +117,9 @@ function DocumentGroup({ filename, hits }: { filename: string; hits: PageHit[] }
         {visible.map((hit) => (
           <li key={hit.pageNo}>
             <div className="flex flex-wrap items-baseline gap-x-2 text-secondary">
-              <span className="font-medium tabular-nums text-primary">Page {hit.pageNo}</span>
+              <span className="rounded-full bg-cream/15 px-2 py-0.5 font-medium tabular-nums text-cream">
+                Page {hit.pageNo}
+              </span>
               {hit.pageLabel && hit.pageLabel !== String(hit.pageNo) && (
                 <span>printed as {hit.pageLabel}</span>
               )}
@@ -145,7 +150,7 @@ function Snippet({ parts }: { parts: SnippetPart[] }) {
       {parts.map((part, i) => {
         const text = part.text.replace(PRIVATE_USE, "•");
         return part.hit ? (
-          <mark key={i} className="rounded-sm bg-highlight px-0.5 text-primary">
+          <mark key={i} className="rounded-sm bg-cream/25 px-0.5 text-warm">
             {text}
           </mark>
         ) : (

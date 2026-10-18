@@ -12,9 +12,20 @@
   --line-color: #232327;
   --text-primary: #f5f5f7;
   --text-secondary: #8a8a90;
-  --accent: #f5f5f7; /* send button fill */
-  --accent-ink: #0a0a0c; /* icon drawn on top of the accent fill */
+  --text-warm: #f2efe8; /* greeting + headings only */
+  --accent-cream: #e6dccb; /* the one accent: send/stop, logo, progress, page chips, orb */
+  --accent: var(--accent-cream); /* send button fill -- every existing bg-accent usage picks this up */
+  --accent-ink: #0a0a0c; /* icon drawn on top of the accent fill -- ~16:1 against accent-cream, well past AA */
   --highlight-bg: #34343c; /* matched text in search snippets */
+  --composer-bg: #141417;
+  --composer-line: #2a2a2f;
+
+  /* SF Pro via the system stack only -- no downloaded/self-hosted font
+     files (Apple's license only permits SF Pro on Apple platforms). On a
+     Mac this resolves to real SF Pro Display/Text; everywhere else, to
+     that platform's own UI font. */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
 }
 
 /* `inline` keeps these as var() references in the generated utilities
@@ -32,37 +43,86 @@
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-highlight: var(--highlight-bg);
+  --color-warm: var(--text-warm);
+  --color-cream: var(--accent-cream);
+  --color-composer: var(--composer-bg);
+  --color-composer-line: var(--composer-line);
   --font-sans:
     ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
+  --font-display: var(--font-display);
+  --font-text: var(--font-text);
 }
 
 html {
   color-scheme: dark;
 }
 
+/* One visible keyboard-focus treatment for every control, rather than
+   leaving it to each component's own classes (and forgetting one). Mouse
+   / touch interaction never shows this -- :focus-visible only fires for
+   keyboard (and other non-pointer) focus. */
+:focus-visible {
+  outline: 2px solid var(--accent-cream);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 body {
   background: var(--page-bg);
   color: var(--text-primary);
-  font-family: var(--font-sans);
+  font-family: var(--font-text);
 }
 
-/* Loader.tsx's three-dot mark: the whole ring slowly rotates while each dot
-   breathes in and out of view, offset in time so they never dim together —
-   that offset is what reads as "orbiting" rather than just "spinning". */
-@keyframes loader-ring-spin {
+/* Orb.tsx: a soft cream glow behind a breathing bright core, with a second
+   translucent ring orbiting (and, by riding the same rotation, rotating)
+   around it. Transform + opacity only, so this stays on the compositor —
+   no JS animation loop. Two independent loops (breathe, orbit) run at the
+   same duration so they read as one coherent pulse, set per-instance via
+   `animationDuration` (2.6s normal, 1.4s for Searching/Writing). */
+@keyframes orb-breathe {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes orb-orbit {
   to {
     transform: rotate(360deg);
   }
 }
-@keyframes loader-dot-breathe {
-  0%,
-  100% {
-    opacity: 0.25;
-    transform: scale(0.85);
+
+/* ThinkingSection/AttachmentList's live stage text: a light sweep across
+   the label, clipped to the text itself. Background-position only. */
+@keyframes stage-sweep {
+  0% {
+    background-position: 160% 0;
   }
-  50% {
-    opacity: 1;
-    transform: scale(1);
+  100% {
+    background-position: -60% 0;
+  }
+}
+.stage-sweep-text {
+  background-image: linear-gradient(
+    100deg,
+    var(--text-secondary) 35%,
+    var(--text-warm) 50%,
+    var(--text-secondary) 65%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage-sweep-text {
+    background: none;
+    -webkit-text-fill-color: var(--text-secondary);
+    color: var(--text-secondary);
   }
 }

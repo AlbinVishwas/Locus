@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import StageLine from "./StageLine";
 
 interface ThinkingSectionProps {
   reasoning: string;
@@ -12,6 +13,14 @@ interface ThinkingSectionProps {
    * the pre-generation read phase; transient, never part of DisplayMessage.
    */
   fetchingUrls?: string[] | null;
+  /**
+   * True while this turn's document search has been kicked off but its
+   * result hasn't reached the client yet, and before any reasoning has
+   * started. Search is near-instant (it's a direct index lookup, not a
+   * model call), so this is often too brief to see -- shown when it isn't.
+   */
+  isSearching?: boolean;
+  searchFileCount?: number;
 }
 
 /**
@@ -41,6 +50,8 @@ export default function ThinkingSection({
   reasoningMs,
   isThinking,
   fetchingUrls,
+  isSearching = false,
+  searchFileCount = 0,
 }: ThinkingSectionProps) {
   const [expanded, setExpanded] = useState(false);
   const hasReasoning = reasoning.length > 0;
@@ -48,41 +59,47 @@ export default function ThinkingSection({
   // The read phase happens before generation, so it takes precedence over
   // "Thinking" — the first reasoning or content token clears it upstream.
   const isReading = !!fetchingUrls?.length;
+  const finished = !isReading && !isSearching && !isThinking && reasoningMs !== null;
 
-  // Before any reasoning_content has arrived at all, there's nothing to
-  // expand yet — the trigger is just a quiet, non-interactive status line.
   const label = isReading
     ? formatReading(fetchingUrls!)
-    : isThinking
-      ? "Thinking"
-      : reasoningMs !== null
-        ? formatDuration(reasoningMs)
-        : "Thinking";
+    : isSearching
+      ? `Searching ${searchFileCount} ${searchFileCount === 1 ? "file" : "files"}`
+      : isThinking
+        ? "Thinking…"
+        : reasoningMs !== null
+          ? formatDuration(reasoningMs)
+          : "Thinking…";
+
+  if (finished) {
+    return (
+      <div className="mb-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          disabled={!hasReasoning}
+          aria-expanded={hasReasoning ? expanded : undefined}
+          className="flex items-center gap-1.5 enabled:cursor-pointer disabled:cursor-default"
+        >
+          <StageLine state="finished" label={label} />
+          {hasReasoning && (
+            <ChevronIcon
+              className={`transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+            />
+          )}
+        </button>
+        {expanded && hasReasoning && (
+          <div className="mt-2 whitespace-pre-wrap border-l border-line pl-3 text-[13px] leading-[1.7] text-secondary">
+            {reasoning}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mb-2">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        disabled={!hasReasoning}
-        className="flex items-center gap-1.5 text-[13px] text-secondary enabled:cursor-pointer disabled:cursor-default"
-      >
-        {/* Subtle breathing opacity while streaming — deliberately not a
-            spinner, per the brief. */}
-        <span className={isThinking || isReading ? "animate-pulse" : undefined}>
-          {label}
-        </span>
-        {hasReasoning && (
-          <ChevronIcon
-            className={`transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
-          />
-        )}
-      </button>
-      {expanded && hasReasoning && (
-        <div className="mt-2 whitespace-pre-wrap border-l border-line pl-3 text-[13px] leading-[1.7] text-secondary">
-          {reasoning}
-        </div>
-      )}
+      <StageLine state="active" fast={isSearching} label={label} />
     </div>
   );
 }
@@ -99,6 +116,7 @@ function ChevronIcon({ className }: { className?: string }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
+      aria-hidden
     >
       <path d="M9 6l6 6-6 6" />
     </svg>
