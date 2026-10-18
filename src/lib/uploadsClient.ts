@@ -22,6 +22,17 @@ export type UploadStageEvent =
   | { type: "ready"; docId: number; pageCount: number }
   | { type: "error"; message: string };
 
+export interface StorageInfo {
+  usedBytes: number;
+  capBytes: number;
+}
+
+export async function getStorageInfo(): Promise<StorageInfo | null> {
+  const res = await fetch("/api/storage");
+  if (!res.ok) return null;
+  return (await res.json()) as StorageInfo;
+}
+
 export async function listConversationFiles(conversationId: string): Promise<ConversationFile[]> {
   const res = await fetch(`/api/uploads?conversationId=${encodeURIComponent(conversationId)}`);
   if (!res.ok) return [];

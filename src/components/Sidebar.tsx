@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getStorageInfo, type StorageInfo } from "@/lib/uploadsClient";
 import { useConversations } from "./ConversationsProvider";
 import ConversationItem from "./ConversationItem";
 
@@ -98,6 +100,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </nav>
 
         <div className="border-t border-line p-3">
+          <StorageIndicator />
           <button
             type="button"
             onClick={handleLogout}
@@ -109,6 +112,27 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       </aside>
     </>
   );
+}
+
+/** "1.2 GB of 5 GB used" — quiet, no bar or color, just the number for whoever's sharing the machine to glance at. Renders nothing if uploads are disabled (the endpoint still answers, since measuring disk usage doesn't depend on the flag, but showing a cap for a feature that's off would be confusing) or the request fails. */
+function StorageIndicator() {
+  const [info, setInfo] = useState<StorageInfo | null>(null);
+
+  useEffect(() => {
+    getStorageInfo().then(setInfo);
+  }, []);
+
+  if (!info) return null;
+
+  return (
+    <p className="px-2.5 pb-1 text-[12px] text-secondary">
+      {formatGB(info.usedBytes)} GB of {formatGB(info.capBytes)} GB used
+    </p>
+  );
+}
+
+function formatGB(bytes: number): string {
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1);
 }
 
 function PlusIcon() {
