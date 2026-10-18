@@ -18,11 +18,26 @@ describe("validateChatRequest", () => {
     [undefined, "`messages` array is required"],
     [{ messages: [{ role: "tool", content: "x" }] }, "supported role"],
     [{ messages: [{ role: "user", content: ["x"] }] }, "string content"],
+    [{ messages: [{ role: "user", content: "hi" }], conversationId: 5 }, "conversationId"],
+    [{ messages: [{ role: "user", content: "hi" }], conversationId: "" }, "conversationId"],
   ])("rejects malformed payloads", (body, expectedError) => {
     const result = validateChatRequest(body);
     expect(result).toMatchObject({ ok: false });
     if (result.ok) throw new Error("Expected validation failure");
     expect(result.error).toContain(expectedError);
+  });
+
+  it("defaults conversationId to null when omitted", () => {
+    const result = validateChatRequest({ messages: [{ role: "user", content: "hi" }] });
+    expect(result).toMatchObject({ ok: true, conversationId: null });
+  });
+
+  it("passes through a valid conversationId", () => {
+    const result = validateChatRequest({
+      messages: [{ role: "user", content: "hi" }],
+      conversationId: "conv-123",
+    });
+    expect(result).toMatchObject({ ok: true, conversationId: "conv-123" });
   });
 
   it("rejects too many messages", () => {

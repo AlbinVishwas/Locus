@@ -4,6 +4,7 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import type { StreamEvent } from "@/lib/types";
+import { DOCUMENT_SEARCH_SYSTEM_NOTE, runDocumentSearch } from "@/lib/chat/documentSearch";
 import { validateChatRequest } from "@/lib/chatRequest";
 import { describeLmStudioError } from "@/lib/lmStudioError";
 import {
@@ -118,6 +119,7 @@ function withExpandedUserMessage(
 
 export async function POST(req: Request) {
   let messages: ChatCompletionMessageParam[];
+  let conversationId: string | null;
   try {
     const body = await req.json();
     const validation = validateChatRequest(body);
@@ -125,6 +127,7 @@ export async function POST(req: Request) {
       return new Response(validation.error, { status: 400 });
     }
     messages = validation.messages;
+    conversationId = validation.conversationId;
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
   }
@@ -140,6 +143,31 @@ export async function POST(req: Request) {
       const { client, model, baseURL } = lmStudio();
 
       try {
+        // Document search runs first, synchronously, before anything else:
+        // it's deterministic and near-instant (the index is built for this),
+        // so there's no reason to make the user wait for the model just to
+        // learn whether their files mention something. Skipped entirely
+        // when this conversation has no uploads -- the common case -- so
+        // ordinary chat is completely unaffected.
+        let documentSearchRan = false;
+        if (conversationId !== null) {
+          const current = latestUserIndex(messages);
+          if (current !== -1) {
+            const outcome = runDocumentSearch(
+              conversationId,
+              messages[current].content as string
+            );
+            if (outcome) {
+              documentSearchRan = true;
+              send({
+                type: "searchResult",
+                result: outcome.result,
+                looseAlternative: outcome.looseAlternative,
+              });
+            }
+          }
+        }
+
         // If this turn has page context to pull in — from the current
         // message or, for follow-ups, a recent one — fetch it and swap in an
         // expanded prompt. This happens per-request and is never persisted:
@@ -153,6 +181,14 @@ export async function POST(req: Request) {
           send({ type: "fetching", urls });
           const results = await fetchUrlContexts(urls, req.signal);
           outbound = withExpandedUserMessage(messages, results);
+        }
+
+        // The note is prepended as its own system message, never mixed into
+        // the user's own message text, and -- like the URL-context prompt
+        // above -- only ever applied to `outbound`, the copy sent to the
+        // model. `messages` (what gets echoed back as history) never sees it.
+        if (documentSearchRan) {
+          outbound = [{ role: "system", content: DOCUMENT_SEARCH_SYSTEM_NOTE }, ...outbound];
         }
 
         // Passing req.signal means: if the client aborts the fetch (stop

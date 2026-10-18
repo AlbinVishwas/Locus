@@ -3,10 +3,11 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_TOTAL_CONTENT_CHARS = 100_000;
+const MAX_CONVERSATION_ID_CHARS = 200;
 const VALID_ROLES = new Set(["system", "user", "assistant"]);
 
 type ValidationResult =
-  | { ok: true; messages: ChatCompletionMessageParam[] }
+  | { ok: true; messages: ChatCompletionMessageParam[]; conversationId: string | null }
   | { ok: false; error: string };
 
 /**
@@ -18,7 +19,17 @@ export function validateChatRequest(body: unknown): ValidationResult {
     return { ok: false, error: "`messages` array is required" };
   }
 
-  const { messages } = body as { messages: unknown };
+  const { messages, conversationId } = body as { messages: unknown; conversationId?: unknown };
+
+  if (
+    conversationId !== undefined &&
+    (typeof conversationId !== "string" ||
+      conversationId.length === 0 ||
+      conversationId.length > MAX_CONVERSATION_ID_CHARS)
+  ) {
+    return { ok: false, error: "`conversationId` must be a non-empty string" };
+  }
+
   if (!Array.isArray(messages) || messages.length === 0) {
     return { ok: false, error: "`messages` array is required" };
   }
@@ -68,5 +79,5 @@ export function validateChatRequest(body: unknown): ValidationResult {
     validated.push({ role, content } as ChatCompletionMessageParam);
   }
 
-  return { ok: true, messages: validated };
+  return { ok: true, messages: validated, conversationId: (conversationId as string) ?? null };
 }

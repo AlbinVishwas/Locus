@@ -216,6 +216,16 @@ function pageMap(c: Cache): PageMap {
 const LAYER = 1;
 const OCR = 2;
 
+/** Whether a conversation has any uploaded documents at all -- the gate chat uses to decide whether to search its files for a turn, or skip that entirely. */
+export function hasDocumentsForConversation(db: Database.Database, conversationId: string): boolean {
+  return (
+    db
+      .prepare("SELECT 1 FROM documents WHERE conversation_id = ? LIMIT 1")
+      .pluck()
+      .get(conversationId) !== undefined
+  );
+}
+
 export function search(
   db: Database.Database,
   rawQuery: string,

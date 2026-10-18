@@ -1,3 +1,5 @@
+import type { SearchResult } from "./search/query";
+
 export type ChatRole = "user" | "assistant" | "system";
 
 export interface ChatMessage {
@@ -13,6 +15,13 @@ export interface ChatMessage {
 export type StreamEvent =
   /** Emitted before generation starts, while page content is being fetched. */
   | { type: "fetching"; urls: string[] }
+  /**
+   * Emitted once, before generation starts, when this turn's conversation
+   * has uploaded documents. Deterministic -- straight from the index, no
+   * model involved -- and never sent back to the model as history (see
+   * toHistoryPayload and DisplayMessage.searchResult below).
+   */
+  | { type: "searchResult"; result: SearchResult; looseAlternative: SearchResult | null }
   | { type: "reasoning"; text: string }
   | { type: "content"; text: string }
   | { type: "done" }
@@ -37,6 +46,15 @@ export interface DisplayMessage {
    * as history, and a transport error is not something the model said.
    */
   failure?: string | null;
+  /**
+   * This turn's document search results, if any ran. Rendered as its own
+   * card, persisted with the message (so it survives a reload) -- but like
+   * `reasoning` and `failure`, never part of `content`, so toHistoryPayload
+   * never sends it back to the model. See documentSearch.ts.
+   */
+  searchResult?: SearchResult | null;
+  /** The loose-mode fallback the user can switch to with one click, when `searchResult` found nothing under exact punctuation. */
+  looseAlternative?: SearchResult | null;
 }
 
 export interface Conversation {
