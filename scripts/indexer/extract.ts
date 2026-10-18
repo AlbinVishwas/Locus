@@ -196,7 +196,12 @@ function join(a: string | null, b: string): string {
   return a ? `${a}; ${b}` : b;
 }
 
-/** The final page source once a 'pending-ocr' page's OCR comes back with text. */
-export function sourceAfterOcr(ocrReason: OcrReason | null): PageSource {
+/**
+ * The final page source once a 'pending-ocr' page's OCR comes back with
+ * text. Takes the stored ocrReason string (ExtractedPage.ocrReason is a
+ * plain `string | null`, wider than the OcrReason union, since it round-
+ * trips through the database) rather than OcrReason itself.
+ */
+export function sourceAfterOcr(ocrReason: string | null): PageSource {
   return ocrReason === "no-text-layer" ? "ocr" : "text+ocr";
 }

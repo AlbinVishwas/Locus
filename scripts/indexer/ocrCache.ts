@@ -42,6 +42,11 @@ export class OcrCache {
     this.putStmt.run(sha256, pageNo, lang, dpi, text);
   }
 
+  /** Drops every cached OCR result for one file's content, once nothing references it any more (retention cleanup, or an upload deleted with its conversation). */
+  deleteForFile(sha256: string): void {
+    this.db.prepare("DELETE FROM ocr WHERE sha256 = ?").run(sha256);
+  }
+
   close(): void {
     this.db.close();
   }
