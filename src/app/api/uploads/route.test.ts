@@ -1,17 +1,38 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { writeFixturePdf } from "../../../../scripts/indexer/fixtures";
 import { insertUploadedDocument } from "../../../../scripts/indexer/store";
 import { DELETE, GET, POST } from "./route";
 
 /**
  * HTTP-level validation for /api/uploads: the checks a real request can
  * actually hit (size, PDF magic bytes, per-conversation count, the
- * storage cap) before indexing is ever attempted. The indexing pipeline
- * itself is covered by src/lib/uploads/pipeline.test.ts (needs real
- * poppler/tesseract); this file doesn't, so it always runs.
+ * storage cap) before indexing is ever attempted, so every test here
+ * except the path-traversal one short-circuits before the real pipeline
+ * (poppler/tesseract) ever runs. That one test needs them -- same
+ * SKIP_OCR_TESTS=1 convention as scripts/indexer/pipeline.test.ts and
+ * src/lib/uploads/pipeline.test.ts -- since it has to let a real upload
+ * reach "ready" to check what actually landed on disk and in the index.
  */
+
+const skipOcr = process.env.SKIP_OCR_TESTS === "1";
+
+function assertToolsInstalled() {
+  const missing = ["pdfinfo", "pdftotext", "pdftoppm", "pdfimages", "tesseract"].filter((tool) => {
+    try {
+      execFileSync("which", [tool], { stdio: "ignore" });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (missing.length > 0) {
+    throw new Error(`Needs ${missing.join(", ")} (brew install poppler tesseract). Set SKIP_OCR_TESTS=1 to skip.`);
+  }
+}
 
 let dir: string;
 
@@ -81,6 +102,34 @@ describe("POST /api/uploads", () => {
     });
     expect(res.status).toBe(400);
     expect(await res.text()).toContain("PDF");
+  });
+
+  it.skipIf(skipOcr)("accepts a path-traversal-style filename as a display name without it ever becoming a path", async () => {
+    assertToolsInstalled();
+    const realPdf = path.join(dir, "real.pdf");
+    await writeFixturePdf(realPdf, [{ lines: ["a real page of text"] }], { workDir: dir });
+
+    const malicious = "../../../../etc/passwd.pdf";
+    const res = await postForm({
+      conversationId: "c-traversal",
+      file: new File([fs.readFileSync(realPdf)], malicious, { type: "application/pdf" }),
+    });
+    // Collect to the end so the file (content-addressed, not named after
+    // the upload) actually gets written and indexed.
+    const text = await res.text();
+    for (const line of text.split("\n\n")) {
+      if (line.includes('"type":"error"')) throw new Error(`Upload failed: ${line}`);
+    }
+
+    const { getWritableDb } = await import("@/lib/uploads/writableDb");
+    const { uploadedDocuments } = await import("../../../../scripts/indexer/store");
+    const [doc] = uploadedDocuments(getWritableDb(), "c-traversal");
+    expect(doc.originalFilename).toBe(malicious); // kept verbatim for display
+    expect(doc.filename).not.toContain(".."); // never used to build a path
+    expect(doc.filename).toMatch(/^[0-9a-f]{64}\.pdf$/); // content-addressed instead
+
+    const { storedFileExists } = await import("@/lib/uploads/storage");
+    expect(await storedFileExists(doc.sha256)).toBe(true);
   });
 
   it("rejects a file over MAX_UPLOAD_FILE_BYTES", async () => {
