@@ -1,5 +1,6 @@
 import path from "node:path";
 import { indexPath } from "@/lib/search/indexDb";
+import { startRetentionSchedule } from "@/lib/uploads/cleanup";
 import { maxFilesPerConversation, maxUploadFileBytes, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
 import { deleteConversationUploads, indexUpload, type UploadStage } from "@/lib/uploads/pipeline";
 import { measureStorageUsage } from "@/lib/uploads/storage";
@@ -20,6 +21,25 @@ function badConversationId(value: unknown): string | null {
 }
 
 /**
+ * Starts the hourly retention sweep the first time anything here is hit,
+ * rather than from a Next.js instrumentation.ts hook (register() runs
+ * once at server start, which sounds like the natural place for this).
+ * It isn't one: instrumentation.js gets its own file trace, completely
+ * separate from every page/route's, and outputFileTracingExcludes (see
+ * next.config.ts) only ever applies to the latter. A build actually
+ * confirmed this -- instrumentation.js's trace pulled in every tender PDF
+ * and the OCR cache by the exact mechanism next.config.ts's comment above
+ * outputFileTracingExcludes was written to prevent, just through a file it
+ * can't reach. Calling it from here instead means cleanup.ts is only ever
+ * reachable through routes already proven (by that same build check) to
+ * trace clean. startRetentionSchedule() is idempotent, so every request
+ * calling this is cheap after the first.
+ */
+function ensureRetentionScheduleStarted(): void {
+  if (uploadsEnabled()) startRetentionSchedule();
+}
+
+/**
  * Uploads one file into a conversation, streaming progress as the file
  * moves through reading -> indexing -> (OCR, if any pages need it) ->
  * ready, as Server-Sent Events -- the same shape as /api/chat's streaming
@@ -33,6 +53,7 @@ export async function POST(req: Request) {
       { status: 403 }
     );
   }
+  ensureRetentionScheduleStarted();
 
   let formData: FormData;
   try {
@@ -123,6 +144,7 @@ export async function GET(req: Request) {
   if (!uploadsEnabled()) {
     return Response.json({ documents: [] });
   }
+  ensureRetentionScheduleStarted();
   const conversationId = new URL(req.url).searchParams.get("conversationId");
   const idError = badConversationId(conversationId);
   if (idError) return new Response(idError, { status: 400 });

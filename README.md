@@ -62,6 +62,7 @@ Other commands:
 | `npm run measure:mixed` | One-off audit: OCRs every text page to find text missing from the text layer |
 | `npm run bench` | Builds a 100,000-page synthetic index and reports size and p50/p95 latency |
 | `npm run share` | Builds, starts production mode with uploads enabled, and shares it over a public Cloudflare tunnel. See [docs/sharing.md](docs/sharing.md). |
+| `npm run verify:no-data-leak` | After `npm run build`: confirms no file-tracing manifest references `data/` (client PDFs, the index, uploads never belong in a deployable bundle) |
 
 Indexer settings (environment variables, all optional):
 

@@ -12,7 +12,8 @@
     "measure:mixed": "tsx scripts/measure-mixed.ts",
     "verify:index": "tsx scripts/verify-index.ts",
     "bench": "tsx scripts/bench-search.ts",
-    "share": "tsx scripts/share.ts"
+    "share": "tsx scripts/share.ts",
+    "verify:no-data-leak": "tsx scripts/verify-no-data-in-build.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
