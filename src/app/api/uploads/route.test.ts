@@ -54,7 +54,7 @@ beforeEach(() => {
   process.env.SEARCH_INDEX_PATH = path.join(dir, "index", "search.db");
   process.env.OCR_CACHE_PATH = path.join(dir, "index", "ocr-cache.db");
   process.env.UPLOADS_DIR = path.join(dir, "uploads");
-  process.env.ASSAY_ENABLE_UPLOADS = "true";
+  process.env.LOCUS_ENABLE_UPLOADS = "true";
 });
 
 afterEach(async () => {
@@ -63,7 +63,7 @@ afterEach(async () => {
   delete process.env.SEARCH_INDEX_PATH;
   delete process.env.OCR_CACHE_PATH;
   delete process.env.UPLOADS_DIR;
-  delete process.env.ASSAY_ENABLE_UPLOADS;
+  delete process.env.LOCUS_ENABLE_UPLOADS;
   delete process.env.MAX_UPLOAD_FILE_BYTES;
   delete process.env.MAX_FILES_PER_CONVERSATION;
   delete process.env.STORAGE_CAP_BYTES;
@@ -73,7 +73,7 @@ afterEach(async () => {
 describe("POST /api/uploads", () => {
   it("refuses every upload when disabled (production, flag unset)", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    delete process.env.ASSAY_ENABLE_UPLOADS;
+    delete process.env.LOCUS_ENABLE_UPLOADS;
     try {
       const res = await postForm({
         conversationId: "c1",

@@ -1,5 +1,5 @@
 /**
- * Shared-passcode auth for Assay.
+ * Shared-passcode auth for Locus.
  *
  * There is one passcode (set by whoever runs the app, in `.env.local`), not
  * per-user accounts. A session is a signed, expiring token in an httpOnly
@@ -11,7 +11,9 @@
  * guards every page and route.
  */
 
-export const SESSION_COOKIE = "assay_session";
+import { envWithFallback } from "./env";
+
+export const SESSION_COOKIE = "locus_session";
 
 const DEFAULT_SESSION_TTL_HOURS = 24 * 7; // a week
 const MAX_LOGIN_ATTEMPTS = 5;
@@ -23,7 +25,7 @@ const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
  * falling back to "no passcode required".
  */
 export function getPasscode(): string | null {
-  const value = process.env.ASSAY_PASSCODE;
+  const value = envWithFallback("LOCUS_PASSCODE", "ASSAY_PASSCODE");
   return value && value.length > 0 ? value : null;
 }
 
@@ -34,17 +36,35 @@ export function sessionTtlMs(): number {
 }
 
 /**
- * Signing key for session tokens. If `SESSION_SECRET` isn't set in the
- * environment, one is generated per process start and kept only in memory.
- * That's a safe default for a laptop app (nothing to leak, nothing to
+ * Signing key for session tokens. In development, when `SESSION_SECRET`
+ * isn't set, one is generated per process start and kept only in memory --
+ * a safe default for local iteration (nothing to leak, nothing to
  * configure to get started) at the cost that restarting the server
- * invalidates every existing session — worth setting `SESSION_SECRET`
- * explicitly once you're sharing the app regularly.
+ * invalidates every existing session.
+ *
+ * In production this per-process fallback is refused outright, not just
+ * warned about: the proxy (Edge runtime) and API routes (Node runtime) are
+ * separate module instances, so each would generate its *own* fallback and
+ * silently diverge -- every login would then fail signature verification
+ * while looking, from the login page, like the request simply never
+ * finished. `npm run share` generates and persists a real SESSION_SECRET
+ * before it ever starts the server (see scripts/share.ts), so this only
+ * fires for a production server started some other way without one set.
  */
 let generatedSecret: string | null = null;
 function getSessionSecret(): string {
   const configured = process.env.SESSION_SECRET;
   if (configured && configured.length > 0) return configured;
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SESSION_SECRET is not set. A production server needs one explicit value shared by " +
+        "every runtime, not a per-process fallback (the Edge proxy and Node routes would each " +
+        "generate their own and no login would ever succeed). Generate one with " +
+        '`node -e "console.log(crypto.randomUUID()+crypto.randomUUID())"` and set SESSION_SECRET ' +
+        "in .env.local, or just run `npm run share`, which does this for you."
+    );
+  }
 
   if (!generatedSecret) {
     generatedSecret = crypto.randomUUID() + crypto.randomUUID();
@@ -145,7 +165,7 @@ type RateLimitEntry = { count: number; windowStart: number };
 
 /**
  * Per-process, in-memory login rate limiter keyed by caller IP. This is
- * intentionally simple: Assay runs as one Node process on one laptop, so
+ * intentionally simple: Locus runs as one Node process on one laptop, so
  * there's no multi-instance state to share. It resets on restart, which is
  * an acceptable trade for not adding a datastore just to throttle a login
  * form.

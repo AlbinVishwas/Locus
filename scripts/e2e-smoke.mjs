@@ -12,7 +12,7 @@ import { chromium } from "playwright";
  * passcode -- this script doesn't start one, the same way verify-index.ts
  * doesn't build an index. For example:
  *
- *   ASSAY_PASSCODE=test-pass ASSAY_ENABLE_UPLOADS=true npm run dev
+ *   LOCUS_PASSCODE=test-pass LOCUS_ENABLE_UPLOADS=true npm run dev
  *   E2E_PASSCODE=test-pass npm run e2e
  *
  * Point it at a different index/uploads dir (SEARCH_INDEX_PATH,

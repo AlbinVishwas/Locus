@@ -1,4 +1,5 @@
 import path from "node:path";
+import { envWithFallback } from "../env";
 
 /**
  * Upload settings, env-configurable the same way the indexer and the chat
@@ -12,7 +13,8 @@ import path from "node:path";
  */
 export function uploadsEnabled(): boolean {
   return (
-    process.env.NODE_ENV !== "production" || process.env.ASSAY_ENABLE_UPLOADS === "true"
+    process.env.NODE_ENV !== "production" ||
+    envWithFallback("LOCUS_ENABLE_UPLOADS", "ASSAY_ENABLE_UPLOADS") === "true"
   );
 }
 

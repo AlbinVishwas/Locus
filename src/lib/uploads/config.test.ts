@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { _resetEnvWarningsForTests } from "../env";
 import { maxFilesPerConversation, maxUploadFileBytes, retentionDays, storageCapBytes, uploadsEnabled } from "./config";
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  _resetEnvWarningsForTests();
   delete process.env.MAX_UPLOAD_FILE_BYTES;
   delete process.env.MAX_FILES_PER_CONVERSATION;
   delete process.env.STORAGE_CAP_BYTES;
@@ -17,14 +19,23 @@ describe("uploadsEnabled", () => {
 
   it("fails closed in production without the flag", () => {
     vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("ASSAY_ENABLE_UPLOADS", "");
+    vi.stubEnv("LOCUS_ENABLE_UPLOADS", "");
     expect(uploadsEnabled()).toBe(false);
   });
 
   it("is enabled in production once the flag is explicitly set", () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("LOCUS_ENABLE_UPLOADS", "true");
+    expect(uploadsEnabled()).toBe(true);
+  });
+
+  it("falls back to the deprecated ASSAY_ENABLE_UPLOADS name, with a warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("ASSAY_ENABLE_UPLOADS", "true");
     expect(uploadsEnabled()).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ASSAY_ENABLE_UPLOADS is deprecated"));
+    warn.mockRestore();
   });
 });
 

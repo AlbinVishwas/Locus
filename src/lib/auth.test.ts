@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { _resetEnvWarningsForTests } from "./env";
 import {
   _resetRateLimitsForTests,
   clearLoginAttempts,
@@ -14,11 +15,13 @@ beforeEach(() => {
   process.env.SESSION_SECRET = "test-secret";
   process.env.SESSION_TTL_HOURS = "1";
   _resetRateLimitsForTests();
+  _resetEnvWarningsForTests();
 });
 
 afterEach(() => {
   delete process.env.SESSION_SECRET;
   delete process.env.SESSION_TTL_HOURS;
+  delete process.env.LOCUS_PASSCODE;
   delete process.env.ASSAY_PASSCODE;
 });
 
@@ -40,8 +43,22 @@ describe("getPasscode", () => {
   });
 
   it("returns the configured value", () => {
-    process.env.ASSAY_PASSCODE = "let-me-in";
+    process.env.LOCUS_PASSCODE = "let-me-in";
     expect(getPasscode()).toBe("let-me-in");
+  });
+
+  it("falls back to the deprecated ASSAY_PASSCODE name, with a warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.ASSAY_PASSCODE = "old-name-still-works";
+    expect(getPasscode()).toBe("old-name-still-works");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ASSAY_PASSCODE is deprecated"));
+    warn.mockRestore();
+  });
+
+  it("prefers LOCUS_PASSCODE when both names are set", () => {
+    process.env.LOCUS_PASSCODE = "new-name";
+    process.env.ASSAY_PASSCODE = "old-name";
+    expect(getPasscode()).toBe("new-name");
   });
 });
 

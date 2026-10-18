@@ -1,6 +1,6 @@
-# Sharing Assay
+# Sharing Locus
 
-One command shares this laptop's Assay with someone else, over a public
+One command shares this laptop's Locus with someone else, over a public
 link, with your documents and your local model — nothing moves to the
 cloud.
 
@@ -14,14 +14,17 @@ What it does, in order:
 
 1. Checks LM Studio is reachable at `http://localhost:1234/v1` and has a
    model loaded. If not, it tells you why and stops — nothing else starts.
-2. Runs `npm run build`.
-3. Starts the app in production mode on port 3000, with uploads and
-   search turned on (`ASSAY_ENABLE_UPLOADS=true`) and URL context turned on
+2. Makes sure `SESSION_SECRET` is set, generating one and saving it to
+   `.env.local` the first time (so sessions survive a restart; see
+   "One-time setup" below if you'd rather set it yourself).
+3. Runs `npm run build`.
+4. Starts the app in production mode on port 3000, with uploads and
+   search turned on (`LOCUS_ENABLE_UPLOADS=true`) and URL context turned on
    (`LOCAL_CHAT_ENABLE_URL_CONTEXT=true`) — both are off by default in
    production, and this is the one place they're meant to be on.
-4. Runs `caffeinate -i` for as long as the server runs, so the laptop
+5. Runs `caffeinate -i` for as long as the server runs, so the laptop
    doesn't go to sleep mid-conversation.
-5. Starts a Cloudflare quick tunnel to port 3000 and prints the public
+6. Starts a Cloudflare quick tunnel to port 3000 and prints the public
    URL.
 
 Press **Ctrl+C** to stop everything — the tunnel, the server, and
@@ -30,7 +33,7 @@ caffeinate all stop together.
 ## What the other person needs
 
 - The URL printed in the terminal.
-- The passcode from `ASSAY_PASSCODE` in your `.env.local`.
+- The passcode from `LOCUS_PASSCODE` in your `.env.local`.
 
 They open the URL, enter the passcode, and use it like any other web app:
 chat, attach PDFs, ask about them. Everything runs on your laptop; nothing
@@ -49,7 +52,7 @@ those yet.)
 Set a passcode once, in `.env.local`:
 
 ```bash
-ASSAY_PASSCODE=choose-something-only-you-and-they-know
+LOCUS_PASSCODE=choose-something-only-you-and-they-know
 ```
 
 ## If the URL changes

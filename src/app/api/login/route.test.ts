@@ -13,13 +13,13 @@ function post(body: unknown, ip = "1.2.3.4") {
 }
 
 beforeEach(() => {
-  process.env.ASSAY_PASSCODE = "correct-passcode";
+  process.env.LOCUS_PASSCODE = "correct-passcode";
   process.env.SESSION_SECRET = "test-secret";
   _resetRateLimitsForTests();
 });
 
 afterEach(() => {
-  delete process.env.ASSAY_PASSCODE;
+  delete process.env.LOCUS_PASSCODE;
   delete process.env.SESSION_SECRET;
 });
 
@@ -37,14 +37,14 @@ describe("POST /api/login", () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     const cookie = res.headers.get("set-cookie") ?? "";
-    expect(cookie).toContain("assay_session=");
+    expect(cookie).toContain("locus_session=");
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("Secure");
     expect(cookie).toContain("SameSite=Lax");
   });
 
   it("fails closed when no passcode is configured", async () => {
-    delete process.env.ASSAY_PASSCODE;
+    delete process.env.LOCUS_PASSCODE;
     const res = await post({ passcode: "anything" });
     expect(res.status).toBe(401);
   });

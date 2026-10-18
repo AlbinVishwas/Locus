@@ -60,7 +60,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         } ${isOpen ? "md:translate-x-0" : "md:-translate-x-full"}`}
       >
         <div className="px-3 pt-3 text-[13px] font-medium tracking-wide text-primary">
-          Assay
+          Locus
         </div>
 
         <div className="flex items-center gap-1 p-3">
