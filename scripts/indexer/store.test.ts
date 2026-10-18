@@ -20,6 +20,11 @@ import {
  * (replaceDocument/deleteDocument) is exercised by pipeline.test.ts and
  * query.test.ts already. */
 
+// Used by every fixture below that isn't testing expiry itself: far enough
+// out that it's never in the past, so uploadedDocuments() (which excludes
+// an expired document even before cleanup deletes it) always finds it.
+const FAR_FUTURE = new Date(Date.now() + 1000 * 60 * 60 * 24 * 3650).toISOString();
+
 let dir: string;
 let db: Database.Database;
 
@@ -70,7 +75,7 @@ describe("insertUploadedDocument", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "hello world")],
     });
     expect(pendingPages).toEqual([]);
@@ -88,7 +93,7 @@ describe("insertUploadedDocument", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "zebra giraffe"), pendingPage(2)],
     });
     expect(pendingPages).toHaveLength(1);
@@ -113,7 +118,7 @@ describe("upsertPageOcr", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [pendingPage(1)],
     });
 
@@ -149,7 +154,7 @@ describe("upsertPageOcr", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [pendingPage(1), pendingPage(2)],
     });
 
@@ -170,7 +175,7 @@ describe("upsertPageOcr", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [pendingPage(1)],
     });
 
@@ -195,7 +200,7 @@ describe("conversation scoping and cleanup", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "alpha")],
     });
     insertUploadedDocument(db, {
@@ -207,7 +212,7 @@ describe("conversation scoping and cleanup", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "beta")],
     });
 
@@ -226,7 +231,7 @@ describe("conversation scoping and cleanup", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "alpha")],
     });
     insertUploadedDocument(db, {
@@ -238,7 +243,7 @@ describe("conversation scoping and cleanup", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "beta")],
     });
 
@@ -289,7 +294,7 @@ describe("conversation scoping and cleanup", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "a")],
     });
 
@@ -304,7 +309,7 @@ describe("conversation scoping and cleanup", () => {
       ocrLang: "eng",
       settings: "v1",
       uploadedAt: "2026-01-01T00:00:00.000Z",
-      expiresAt: "2026-01-15T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
       pages: [textPage(1, "b")],
     });
 

@@ -14,7 +14,7 @@ import {
   replaceDocument,
   type ExtractedPage,
 } from "../../../scripts/indexer/store";
-import { search, toFtsPhrase } from "./query";
+import { hasDocumentsForConversation, search, toFtsPhrase } from "./query";
 
 /**
  * Query behaviour against a small synthetic index written through the real
@@ -309,5 +309,58 @@ describe("search: conversation scoping", () => {
       scope: "conv-scope-test",
     });
     expect(inScope.documents).toHaveLength(1);
+  });
+});
+
+describe("search: an expired document is gone immediately, not just after cleanup runs", () => {
+  beforeAll(() => {
+    insertUploadedDocument(db, {
+      conversationId: "conv-expired-test",
+      originalFilename: "Expired.pdf",
+      storedFilename: "expired-test.pdf",
+      sha256: "expired-test-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "test",
+      uploadedAt: "2020-01-01T00:00:00.000Z",
+      expiresAt: "2020-01-15T00:00:00.000Z", // long past, retention cleanup just hasn't run yet
+      pages: [
+        {
+          pageNo: 1,
+          pageLabel: null,
+          source: "text",
+          ocrReason: null,
+          imageCoverage: 0,
+          layerText: "quokka wombat echidna",
+          ocrText: null,
+          error: null,
+        },
+      ],
+    });
+  });
+
+  it("is unsearchable by its own conversation, with no upload or cleanup run happening", () => {
+    const result = search(db, "quokka wombat", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "conv-expired-test",
+    });
+    expect(result.hits).toHaveLength(0);
+    expect(result.documents).toHaveLength(0);
+  });
+
+  it("a filename match for it is gone too", () => {
+    const result = search(db, "expired", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "conv-expired-test",
+    });
+    expect(result.documents).toHaveLength(0);
+  });
+
+  it("hasDocumentsForConversation reports false, the same as a conversation that never had files", () => {
+    expect(hasDocumentsForConversation(db, "conv-expired-test")).toBe(false);
   });
 });

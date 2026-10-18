@@ -374,15 +374,29 @@ export function upsertPageOcr(
   })();
 }
 
-export function uploadedDocuments(db: Database.Database, conversationId: string): UploadedDocument[] {
+/**
+ * A conversation's uploaded documents that are still live. Excludes a
+ * document past its expiry even if the hourly retention sweep hasn't
+ * deleted its row yet -- expiry is a fact about the clock, not about
+ * whether cleanup has gotten to it, so the UI (and anything that treats
+ * "has files" as true/false) must see it as gone the moment it passes, not
+ * up to an hour later.
+ */
+export function uploadedDocuments(
+  db: Database.Database,
+  conversationId: string,
+  nowIso: string = new Date().toISOString()
+): UploadedDocument[] {
   return db
     .prepare(
       `SELECT id, conversation_id as conversationId, original_filename as originalFilename,
               filename, sha256, size_bytes as sizeBytes, page_count as pageCount, status,
               uploaded_at as uploadedAt, expires_at as expiresAt, error
-       FROM documents WHERE conversation_id = ? ORDER BY uploaded_at`
+       FROM documents
+       WHERE conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY uploaded_at`
     )
-    .all(conversationId) as UploadedDocument[];
+    .all(conversationId, nowIso) as UploadedDocument[];
 }
 
 /** Every document (any conversation, or the tender corpus) past its expiry. */

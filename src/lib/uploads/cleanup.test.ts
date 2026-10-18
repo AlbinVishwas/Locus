@@ -151,3 +151,47 @@ describe("runRetentionCleanup", () => {
     expect(result).toEqual({ deletedDocuments: 0, deletedFiles: 0 });
   });
 });
+
+describe("startRetentionSchedule / ensureRetentionScheduleStarted", () => {
+  afterEach(async () => {
+    const { _resetRetentionScheduleForTests } = await import("./cleanup");
+    _resetRetentionScheduleForTests();
+    delete process.env.LOCUS_ENABLE_UPLOADS;
+  });
+
+  it("deletes a file already past its 14-day expiry the moment the schedule starts, with no upload happening", async () => {
+    const { getWritableDb } = await import("./writableDb");
+    const { storedFileExists, writeStoredFile } = await import("./storage");
+    const db = getWritableDb();
+
+    insertUploadedDocument(db, {
+      conversationId: "conv-stale",
+      originalFilename: "Stale.pdf",
+      storedFilename: "stale-hash.pdf",
+      sha256: "stale-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: "2020-01-01T00:00:00.000Z",
+      expiresAt: "2020-01-15T00:00:00.000Z", // long past, as if the server has been off since
+      pages: [textPage("stale document text")],
+    });
+    await writeStoredFile("stale-hash", Buffer.from("stale"));
+
+    process.env.LOCUS_ENABLE_UPLOADS = "true";
+    const { ensureRetentionScheduleStarted } = await import("./cleanup");
+    // This is the exact entry point layout.tsx and the uploads route call
+    // -- there's no separate "run once at start" step to invoke here, by
+    // design: starting the schedule and running it once immediately are
+    // the same call (see startRetentionSchedule).
+    ensureRetentionScheduleStarted();
+
+    // runRetentionCleanup runs fire-and-forget inside the schedule (see
+    // startRetentionSchedule); give its microtasks a turn to settle.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(await storedFileExists("stale-hash")).toBe(false);
+    const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+    expect(uploadedDocuments(db, "conv-stale")).toHaveLength(0);
+  });
+});

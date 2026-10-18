@@ -145,6 +145,8 @@ interface PageMap {
   rank: Map<number, number>;
   /** docId -> its conversation scope (null = tender corpus). */
   scope: Map<number, string | null>;
+  /** docId -> its expiry, ISO string, or null for a document with none (the tender corpus). */
+  expiresAt: Map<number, string | null>;
 }
 
 interface Cache {
@@ -170,7 +172,9 @@ function connectionCache(db: Database.Database): Cache {
         filename: byMode("filename"),
         generation: db.prepare("SELECT value FROM meta WHERE key = 'generation'").pluck(),
         documents: db.prepare(
-          "SELECT id, filename, original_filename as originalFilename, conversation_id as conversationId FROM documents"
+          `SELECT id, filename, original_filename as originalFilename,
+                  conversation_id as conversationId, expires_at as expiresAt
+           FROM documents`
         ),
         pages: db.prepare("SELECT id, doc_id, page_no FROM pages").raw(),
         page: db.prepare("SELECT page_label, source FROM pages WHERE id = ?"),
@@ -202,6 +206,7 @@ function pageMap(c: Cache): PageMap {
     filename: string;
     originalFilename: string | null;
     conversationId: string | null;
+    expiresAt: string | null;
   }>;
   // The tender corpus has no original_filename (its own filename already
   // is the display name); an upload's filename on disk is content-
@@ -221,6 +226,7 @@ function pageMap(c: Cache): PageMap {
     filename: new Map(docs.map((d) => [d.id, display(d)])),
     rank: new Map(docs.map((d, i) => [d.id, i])),
     scope: new Map(docs.map((d) => [d.id, d.conversationId])),
+    expiresAt: new Map(docs.map((d) => [d.id, d.expiresAt])),
   };
   return c.pageMap;
 }
@@ -229,13 +235,25 @@ function pageMap(c: Cache): PageMap {
 const LAYER = 1;
 const OCR = 2;
 
-/** Whether a conversation has any uploaded documents at all -- the gate chat uses to decide whether to search its files for a turn, or skip that entirely. */
-export function hasDocumentsForConversation(db: Database.Database, conversationId: string): boolean {
+/**
+ * Whether a conversation has any *live* uploaded document -- the gate chat
+ * uses to decide whether to search its files for a turn, or skip that
+ * entirely. A document past its expiry doesn't count, even if the hourly
+ * retention sweep hasn't deleted its row yet: expiry is a fact about the
+ * clock, not about whether cleanup has run.
+ */
+export function hasDocumentsForConversation(
+  db: Database.Database,
+  conversationId: string,
+  nowIso: string = new Date().toISOString()
+): boolean {
   return (
     db
-      .prepare("SELECT 1 FROM documents WHERE conversation_id = ? LIMIT 1")
+      .prepare(
+        "SELECT 1 FROM documents WHERE conversation_id = ? AND (expires_at IS NULL OR expires_at > ?) LIMIT 1"
+      )
       .pluck()
-      .get(conversationId) !== undefined
+      .get(conversationId, nowIso) !== undefined
   );
 }
 
@@ -256,7 +274,15 @@ export function search(
   const c = connectionCache(db);
   const s = c.statements;
   const map = pageMap(c);
-  const inScope = (docId: number) => !scoped || map.scope.get(docId) === scope;
+  // Checked against the clock on every call, not baked into the cached
+  // page map: a document can cross its expiry between two searches with
+  // no write (and so no generation bump) happening in between.
+  const nowIso = new Date().toISOString();
+  const isExpired = (docId: number) => {
+    const expiresAt = map.expiresAt.get(docId);
+    return expiresAt !== null && expiresAt !== undefined && expiresAt <= nowIso;
+  };
+  const inScope = (docId: number) => (!scoped || map.scope.get(docId) === scope) && !isExpired(docId);
 
   // An empty prepared query (e.g. "///" in loose mode) can't match anything
   // meaningful; instr() with "" would match every page, so stop here.
