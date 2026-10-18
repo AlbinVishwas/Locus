@@ -37,6 +37,11 @@ export default function MessageBubble({
       {message.searchResult && (
         <SearchResultCard result={message.searchResult} looseAlternative={message.looseAlternative} />
       )}
+      {message.filesExpired && (
+        <p className="mb-3 text-[13px] text-secondary">
+          This conversation&apos;s files expired and were removed. Upload them again to search them.
+        </p>
+      )}
       {showThinking && (
         <ThinkingSection
           reasoning={message.reasoning}

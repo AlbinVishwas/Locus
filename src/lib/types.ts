@@ -55,6 +55,14 @@ export interface DisplayMessage {
   searchResult?: SearchResult | null;
   /** The loose-mode fallback the user can switch to with one click, when `searchResult` found nothing under exact punctuation. */
   looseAlternative?: SearchResult | null;
+  /**
+   * True when this conversation once had uploaded files (an earlier
+   * message in it has its own `searchResult`) but has none any more by
+   * the time this turn was sent -- they expired and retention cleanup
+   * removed them. Set client-side (see Chat.tsx); the server has no
+   * record of a document once it's deleted, by design.
+   */
+  filesExpired?: boolean;
 }
 
 export interface Conversation {

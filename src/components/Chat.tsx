@@ -189,12 +189,32 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       commitMessages((prev) => [...prev, userMessage, assistantMessage]);
       setIsStreaming(true);
 
+      // Files expiring is normal, expected behaviour (retention does its
+      // job), but a silent conversation that used to find things and now
+      // never does would read as the feature quietly breaking. Checked
+      // fresh on every send, not from possibly-stale mount-time state: a
+      // tab left open across the 14-day retention window shouldn't need a
+      // reload to notice.
+      let filesExpiredNoticeShown = false;
+      const hadFilesEver = messages.some((m) => m.searchResult != null);
+      if (hadFilesEver) {
+        const stillHasFiles = (await listConversationFiles(conversation.id)).length > 0;
+        if (!stillHasFiles) {
+          filesExpiredNoticeShown = true;
+          patchAssistantMessage(assistantId, (m) => ({ ...m, filesExpired: true }));
+        }
+      }
+
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
       let reasoningStartedAt: number | null = null;
       let reasoningEndedAt: number | null = null;
-      let hasVisibleOutput = false;
+      // Already true when the expired-files notice above was shown: that
+      // notice is a complete, useful turn on its own and must survive the
+      // "nothing came back, drop this turn" check below even if the model
+      // call that follows fails.
+      let hasVisibleOutput = filesExpiredNoticeShown;
 
       try {
         const res = await fetch("/api/chat", {
