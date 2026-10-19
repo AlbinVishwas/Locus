@@ -55,14 +55,18 @@ async function main() {
   await page.waitForURL(BASE + "/", { timeout: 10000 });
   check("login succeeds and lands on the chat page", page.url() === BASE + "/");
 
-  // Two tender PDFs into this (fresh) conversation.
+  // Two tender PDFs into this (fresh) conversation. Files don't expire by
+  // default any more -- a ready file's chip shows its page count instead
+  // (e.g. "264 pages"), which is what marks it done here. This runs
+  // before any search, so "pages" text on the page can only come from
+  // these two chips.
   await page.locator('input[type="file"]').setInputFiles([FILE_A, FILE_B]);
   await page.waitForFunction(
-    () => (document.body.innerText.match(/Expires in \d+ days?/g) ?? []).length >= 2,
+    () => (document.body.innerText.match(/\d+ pages?/g) ?? []).length >= 2,
     null,
     { timeout: 180000 }
   );
-  check("both uploaded files reach Ready (show an expiry)", true);
+  check("both uploaded files reach Ready (show a page count)", true);
 
   const textarea = page.locator("textarea");
 

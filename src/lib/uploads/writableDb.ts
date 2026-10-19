@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 // knows how to write the index, used by the CLI indexer, by tests, and now
 // by this -- the one place the app itself writes rather than only reading
 // (see the comment at the top of scripts/indexer/store.ts).
-import { openIndex } from "../../../scripts/indexer/store";
+import { clearLegacyUploadExpiryOnce, openIndex } from "../../../scripts/indexer/store";
 import { indexPath } from "../search/indexDb";
 
 /**
@@ -16,7 +16,10 @@ import { indexPath } from "../search/indexDb";
 let cached: Database.Database | null = null;
 
 export function getWritableDb(): Database.Database {
-  if (!cached) cached = openIndex(indexPath());
+  if (!cached) {
+    cached = openIndex(indexPath());
+    clearLegacyUploadExpiryOnce(cached);
+  }
   return cached;
 }
 

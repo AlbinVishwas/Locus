@@ -11,6 +11,7 @@ interface ChatInputProps {
   files: ConversationFile[];
   uploading: InProgressUpload[];
   onAttachFiles: (files: File[]) => void;
+  onRemoveFile: (docId: number) => void;
   /**
    * "centered" is the empty-state composer (max-width 720px, with the
    * chip row below it); "pinned" is the normal bottom-of-conversation bar.
@@ -33,6 +34,7 @@ export default function ChatInput({
   files,
   uploading,
   onAttachFiles,
+  onRemoveFile,
   variant = "pinned",
 }: ChatInputProps) {
   const [value, setValue] = useState("");
@@ -216,7 +218,7 @@ export default function ChatInput({
     return (
       <div className="w-full px-4" {...dragHandlers}>
         <div className="mx-auto max-w-[720px]">
-          <AttachmentList files={files} uploading={uploading} />
+          <AttachmentList files={files} uploading={uploading} onRemoveFile={onRemoveFile} />
           {composerBar}
           {chipRow}
         </div>
@@ -227,7 +229,7 @@ export default function ChatInput({
   return (
     <div className="px-4 pb-6 pt-2 sm:px-6" {...dragHandlers}>
       <div className="mx-auto max-w-[760px]">
-        <AttachmentList files={files} uploading={uploading} />
+        <AttachmentList files={files} uploading={uploading} onRemoveFile={onRemoveFile} />
         {composerBar}
       </div>
     </div>

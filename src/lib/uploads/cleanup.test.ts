@@ -150,6 +150,83 @@ describe("runRetentionCleanup", () => {
     const result = await runRetentionCleanup();
     expect(result).toEqual({ deletedDocuments: 0, deletedFiles: 0 });
   });
+
+  it("with LOCUS_RETENTION_DAYS unset, a file uploaded 30+ days ago never expires -- not now, not on a later (hourly-equivalent) run", async () => {
+    const { getWritableDb } = await import("./writableDb");
+    const { writeStoredFile, storedFileExists } = await import("./storage");
+    const db = getWritableDb();
+
+    const thirtyFiveDaysAgo = new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString();
+    insertUploadedDocument(db, {
+      conversationId: "conv-ancient",
+      originalFilename: "Ancient.pdf",
+      storedFilename: "ancient-hash.pdf",
+      sha256: "ancient-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: thirtyFiveDaysAgo,
+      expiresAt: null, // what pipeline.ts now writes when retention is off
+      pages: [textPage("ancient but permanent document")],
+    });
+    await writeStoredFile("ancient-hash", Buffer.from("ancient"));
+
+    const { runRetentionCleanup } = await import("./cleanup");
+    const { search } = await import("../search/query");
+    const { getIndexDb } = await import("../search/indexDb");
+
+    // Still searchable before any cleanup runs at all.
+    expect(
+      search(getIndexDb(), "permanent", { mode: "exact", offset: 0, limit: 10, scope: "conv-ancient" }).hits
+    ).toHaveLength(1);
+
+    const firstRun = await runRetentionCleanup();
+    expect(firstRun).toEqual({ deletedDocuments: 0, deletedFiles: 0 });
+
+    // A second run -- standing in for the next hourly sweep -- still
+    // leaves it alone; this isn't a one-time grace period.
+    const secondRun = await runRetentionCleanup();
+    expect(secondRun).toEqual({ deletedDocuments: 0, deletedFiles: 0 });
+
+    expect(await storedFileExists("ancient-hash")).toBe(true);
+    const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+    expect(uploadedDocuments(db, "conv-ancient")).toHaveLength(1);
+  });
+
+  it("setting LOCUS_RETENTION_DAYS still expires a file correctly", async () => {
+    process.env.LOCUS_RETENTION_DAYS = "14";
+    try {
+      const { getWritableDb } = await import("./writableDb");
+      const { writeStoredFile, storedFileExists } = await import("./storage");
+      const { retentionMs } = await import("./config");
+      const db = getWritableDb();
+
+      // Uploaded (per config at the time) 15 days ago with a 14-day
+      // retention window -- one day past its expiry.
+      const fifteenDaysAgo = Date.now() - 15 * 24 * 60 * 60 * 1000;
+      insertUploadedDocument(db, {
+        conversationId: "conv-configured-expiry",
+        originalFilename: "Configured.pdf",
+        storedFilename: "configured-hash.pdf",
+        sha256: "configured-hash",
+        sizeBytes: 1,
+        ocrLang: "eng",
+        settings: "v1",
+        uploadedAt: new Date(fifteenDaysAgo).toISOString(),
+        expiresAt: new Date(fifteenDaysAgo + retentionMs()!).toISOString(),
+        pages: [textPage("configured expiry document")],
+      });
+      await writeStoredFile("configured-hash", Buffer.from("configured"));
+
+      const { runRetentionCleanup } = await import("./cleanup");
+      const result = await runRetentionCleanup();
+
+      expect(result).toEqual({ deletedDocuments: 1, deletedFiles: 1 });
+      expect(await storedFileExists("configured-hash")).toBe(false);
+    } finally {
+      delete process.env.LOCUS_RETENTION_DAYS;
+    }
+  });
 });
 
 describe("startRetentionSchedule / ensureRetentionScheduleStarted", () => {
@@ -159,7 +236,7 @@ describe("startRetentionSchedule / ensureRetentionScheduleStarted", () => {
     delete process.env.LOCUS_ENABLE_UPLOADS;
   });
 
-  it("deletes a file already past its 14-day expiry the moment the schedule starts, with no upload happening", async () => {
+  it("deletes a file already past its (explicitly set) expiry the moment the schedule starts, with no upload happening", async () => {
     const { getWritableDb } = await import("./writableDb");
     const { storedFileExists, writeStoredFile } = await import("./storage");
     const db = getWritableDb();

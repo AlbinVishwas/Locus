@@ -228,4 +228,81 @@ describe("DELETE /api/uploads", () => {
     const body = (await after.json()) as { documents: unknown[] };
     expect(body.documents).toHaveLength(0);
   });
+
+  it("with a docId, removes just that one file", async () => {
+    const { getWritableDb } = await import("@/lib/uploads/writableDb");
+    const db = getWritableDb();
+    insertUploadedDocument(db, {
+      conversationId: "c-del-one",
+      originalFilename: "Keep.pdf",
+      storedFilename: "keep.pdf",
+      sha256: "keep-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: new Date().toISOString(),
+      expiresAt: null,
+      pages: [],
+    });
+    insertUploadedDocument(db, {
+      conversationId: "c-del-one",
+      originalFilename: "Remove.pdf",
+      storedFilename: "remove.pdf",
+      sha256: "remove-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: new Date().toISOString(),
+      expiresAt: null,
+      pages: [],
+    });
+
+    const { uploadedDocuments } = await import("../../../../scripts/indexer/store");
+    const toRemove = uploadedDocuments(db, "c-del-one").find((d) => d.originalFilename === "Remove.pdf")!;
+
+    const res = await DELETE(
+      new Request(`http://localhost/api/uploads?conversationId=c-del-one&docId=${toRemove.id}`, {
+        method: "DELETE",
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const remaining = uploadedDocuments(db, "c-del-one");
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].originalFilename).toBe("Keep.pdf");
+  });
+
+  it("404s for a docId that doesn't belong to that conversation", async () => {
+    const { getWritableDb } = await import("@/lib/uploads/writableDb");
+    const db = getWritableDb();
+    insertUploadedDocument(db, {
+      conversationId: "c-owner",
+      originalFilename: "Owned.pdf",
+      storedFilename: "owned.pdf",
+      sha256: "owned-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: new Date().toISOString(),
+      expiresAt: null,
+      pages: [],
+    });
+    const { uploadedDocuments } = await import("../../../../scripts/indexer/store");
+    const doc = uploadedDocuments(db, "c-owner")[0];
+
+    const res = await DELETE(
+      new Request(`http://localhost/api/uploads?conversationId=c-not-the-owner&docId=${doc.id}`, {
+        method: "DELETE",
+      })
+    );
+    expect(res.status).toBe(404);
+    expect(uploadedDocuments(db, "c-owner")).toHaveLength(1);
+  });
+
+  it("400s for a non-numeric docId", async () => {
+    const res = await DELETE(
+      new Request("http://localhost/api/uploads?conversationId=c-del&docId=not-a-number", { method: "DELETE" })
+    );
+    expect(res.status).toBe(400);
+  });
 });

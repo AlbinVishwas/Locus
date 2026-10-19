@@ -214,7 +214,7 @@ export interface NewUploadedDocument {
   ocrLang: string;
   settings: string;
   uploadedAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
   pages: ExtractedPage[];
 }
 
@@ -228,7 +228,7 @@ export interface UploadedDocument {
   pageCount: number;
   status: "ready" | "indexing" | "failed";
   uploadedAt: string;
-  expiresAt: string;
+  expiresAt: string | null;
   error: string | null;
 }
 
@@ -436,4 +436,55 @@ export function deleteConversationDocuments(
     for (const doc of docs) deleteDocument(db, doc.id);
   })();
   return docs;
+}
+
+/**
+ * Deletes one uploaded document -- the per-file remove button's own
+ * delete, as opposed to deleteConversationDocuments' whole-conversation
+ * cascade. Scoped to `conversationId` so one conversation can never
+ * delete another's file by guessing an id. Returns its sha256 (for the
+ * caller to decide what else to clean up), or null if no such document
+ * exists in that conversation.
+ */
+export function deleteConversationDocument(
+  db: Database.Database,
+  conversationId: string,
+  docId: number
+): { sha256: string } | null {
+  const doc = db
+    .prepare("SELECT sha256 FROM documents WHERE id = ? AND conversation_id = ?")
+    .get(docId, conversationId) as { sha256: string } | undefined;
+  if (!doc) return null;
+  deleteDocument(db, docId);
+  return doc;
+}
+
+const LEGACY_EXPIRY_MIGRATION_KEY = "migration_cleared_legacy_expiry_v1";
+
+/**
+ * One-time cleanup for the switch from "files expire after 14 days,
+ * always" to "files never expire unless LOCUS_RETENTION_DAYS is set":
+ * every expires_at already on disk was written under the old, now-gone
+ * default, so none of it means what it used to. Clears it so the next
+ * retention sweep -- which now runs automatically from app start, not
+ * just on demand -- can't delete an upload because of a rule that no
+ * longer exists. Never touches the tender corpus (conversation_id IS
+ * NULL there already). Guarded by a row in `meta`, not a schema version
+ * bump: there's no way to safely rebuild an upload's rows from scratch
+ * (unlike the tender corpus's `npm run index --force`), so this must
+ * never run more than once, including across restarts.
+ */
+export function clearLegacyUploadExpiryOnce(db: Database.Database): void {
+  const already = db
+    .prepare("SELECT 1 FROM meta WHERE key = ?")
+    .pluck()
+    .get(LEGACY_EXPIRY_MIGRATION_KEY);
+  if (already) return;
+
+  db.transaction(() => {
+    db.prepare(
+      "UPDATE documents SET expires_at = NULL WHERE conversation_id IS NOT NULL AND expires_at IS NOT NULL"
+    ).run();
+    db.prepare("INSERT INTO meta (key, value) VALUES (?, '1')").run(LEGACY_EXPIRY_MIGRATION_KEY);
+  })();
 }

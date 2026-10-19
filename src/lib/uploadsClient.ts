@@ -12,7 +12,8 @@ export interface ConversationFile {
   pageCount: number;
   status: "ready" | "indexing" | "failed";
   uploadedAt: string;
-  expiresAt: string;
+  /** Null unless LOCUS_RETENTION_DAYS is set -- files don't expire by default. */
+  expiresAt: string | null;
   error: string | null;
 }
 
@@ -44,6 +45,19 @@ export async function deleteConversationFiles(conversationId: string): Promise<v
   await fetch(`/api/uploads?conversationId=${encodeURIComponent(conversationId)}`, {
     method: "DELETE",
   }).catch(() => {}); // best-effort: a conversation being deleted locally shouldn't block on the network
+}
+
+/** The per-file remove button: deletes one uploaded document from a conversation. Returns whether it actually removed something, so the caller can tell a real failure from "already gone". */
+export async function deleteConversationFile(conversationId: string, docId: number): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `/api/uploads?conversationId=${encodeURIComponent(conversationId)}&docId=${docId}`,
+      { method: "DELETE" }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -179,4 +179,175 @@ describe.skipIf(skip)("indexUpload", () => {
     await deleteConversationUploads("conv-y");
     expect(await storedFileExists(sha256)).toBe(false);
   });
+
+  it("isn't given an expiry at all by default (LOCUS_RETENTION_DAYS unset)", async () => {
+    const { indexUpload } = await import("./pipeline");
+    const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+    const { getWritableDb } = await import("./writableDb");
+
+    const file = path.join(dir, "never-expires.pdf");
+    await writeFixturePdf(file, [{ lines: ["lasting otter record"] }], { workDir: dir });
+    await indexUpload({
+      conversationId: "conv-no-retention",
+      originalFilename: "NeverExpires.pdf",
+      bytes: fs.readFileSync(file),
+      onStage: () => {},
+    });
+
+    const [doc] = uploadedDocuments(getWritableDb(), "conv-no-retention");
+    expect(doc.expiresAt).toBeNull();
+  });
+
+  it("is given a real future expiry when LOCUS_RETENTION_DAYS is set", async () => {
+    process.env.LOCUS_RETENTION_DAYS = "14";
+    try {
+      const { indexUpload } = await import("./pipeline");
+      const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+      const { getWritableDb } = await import("./writableDb");
+
+      const file = path.join(dir, "expires.pdf");
+      await writeFixturePdf(file, [{ lines: ["temporary otter record"] }], { workDir: dir });
+      const before = Date.now();
+      await indexUpload({
+        conversationId: "conv-with-retention",
+        originalFilename: "Expires.pdf",
+        bytes: fs.readFileSync(file),
+        onStage: () => {},
+      });
+
+      const [doc] = uploadedDocuments(getWritableDb(), "conv-with-retention");
+      expect(doc.expiresAt).not.toBeNull();
+      const expiresAt = new Date(doc.expiresAt!).getTime();
+      const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+      // Within a few seconds of "uploaded just now + 14 days", not an
+      // exact match -- the upload itself takes real wall-clock time.
+      expect(expiresAt).toBeGreaterThan(before + fourteenDaysMs - 5000);
+      expect(expiresAt).toBeLessThan(before + fourteenDaysMs + 60_000);
+    } finally {
+      delete process.env.LOCUS_RETENTION_DAYS;
+    }
+  });
+
+  it("deleteSingleUpload removes just the one file, keeping a sibling file in the same conversation", async () => {
+    const { indexUpload, deleteSingleUpload } = await import("./pipeline");
+    const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+    const { getWritableDb } = await import("./writableDb");
+    const { storedFileExists } = await import("./storage");
+
+    const fileA = path.join(dir, "keep.pdf");
+    const fileB = path.join(dir, "remove.pdf");
+    await writeFixturePdf(fileA, [{ lines: ["keep this heron notice"] }], { workDir: dir });
+    await writeFixturePdf(fileB, [{ lines: ["remove this falcon notice"] }], { workDir: dir });
+
+    await indexUpload({
+      conversationId: "conv-remove-one",
+      originalFilename: "Keep.pdf",
+      bytes: fs.readFileSync(fileA),
+      onStage: () => {},
+    });
+    await indexUpload({
+      conversationId: "conv-remove-one",
+      originalFilename: "Remove.pdf",
+      bytes: fs.readFileSync(fileB),
+      onStage: () => {},
+    });
+
+    const db = getWritableDb();
+    const docs = uploadedDocuments(db, "conv-remove-one");
+    expect(docs).toHaveLength(2);
+    const toRemove = docs.find((d) => d.originalFilename === "Remove.pdf")!;
+    const toKeep = docs.find((d) => d.originalFilename === "Keep.pdf")!;
+
+    const removed = await deleteSingleUpload("conv-remove-one", toRemove.id);
+    expect(removed).toBe(true);
+
+    const remaining = uploadedDocuments(db, "conv-remove-one");
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(toKeep.id);
+
+    expect(await storedFileExists(toRemove.sha256)).toBe(false);
+    expect(await storedFileExists(toKeep.sha256)).toBe(true);
+
+    const { getIndexDb } = await import("../search/indexDb");
+    const removedHit = search(getIndexDb(), "falcon", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "conv-remove-one",
+    });
+    expect(removedHit.hits).toHaveLength(0);
+    const keptHit = search(getIndexDb(), "heron", {
+      mode: "exact",
+      offset: 0,
+      limit: 10,
+      scope: "conv-remove-one",
+    });
+    expect(keptHit.hits).toHaveLength(1);
+  });
+
+  it("deleteSingleUpload is scoped to the given conversation: wrong conversationId deletes nothing", async () => {
+    const { indexUpload, deleteSingleUpload } = await import("./pipeline");
+    const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+    const { getWritableDb } = await import("./writableDb");
+
+    const file = path.join(dir, "owned.pdf");
+    await writeFixturePdf(file, [{ lines: ["owned by conv-owner only"] }], { workDir: dir });
+    await indexUpload({
+      conversationId: "conv-owner",
+      originalFilename: "Owned.pdf",
+      bytes: fs.readFileSync(file),
+      onStage: () => {},
+    });
+    const [doc] = uploadedDocuments(getWritableDb(), "conv-owner");
+
+    const removed = await deleteSingleUpload("conv-not-the-owner", doc.id);
+    expect(removed).toBe(false);
+    expect(uploadedDocuments(getWritableDb(), "conv-owner")).toHaveLength(1);
+  });
+
+  it("deleteSingleUpload keeps OCR cache entries another file still uses, and drops them once nothing does", async () => {
+    const { indexUpload, deleteSingleUpload } = await import("./pipeline");
+    const { uploadedDocuments } = await import("../../../scripts/indexer/store");
+    const { getWritableDb } = await import("./writableDb");
+    const { storedFileExists } = await import("./storage");
+    const Database = (await import("better-sqlite3")).default;
+    const { createHash } = await import("node:crypto");
+
+    // An image-only page forces a real OCR pass, so this exercises the
+    // actual cache -- not just the search-index rows.
+    const file = path.join(dir, "shared-ocr.pdf");
+    await writeFixturePdf(file, [{ imageWords: "PANGOLIN SURVEY" }], { workDir: dir });
+    const bytes = fs.readFileSync(file);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+    await indexUpload({ conversationId: "conv-ocr-a", originalFilename: "Shared.pdf", bytes, onStage: () => {} });
+    await indexUpload({ conversationId: "conv-ocr-b", originalFilename: "Shared.pdf", bytes, onStage: () => {} });
+
+    // Read the OCR cache file directly, the way _resetSharedContextForTests
+    // doesn't need to -- this test only needs to know whether rows for
+    // this sha256 exist, not go through the cache's own get()/put() API.
+    const readCacheRowCount = () => {
+      const db = new Database(process.env.OCR_CACHE_PATH!, { readonly: true });
+      try {
+        return db.prepare("SELECT COUNT(*) FROM ocr WHERE sha256 = ?").pluck().get(sha256) as number;
+      } finally {
+        db.close();
+      }
+    };
+    expect(readCacheRowCount()).toBeGreaterThan(0);
+
+    const docA = uploadedDocuments(getWritableDb(), "conv-ocr-a")[0];
+    await deleteSingleUpload("conv-ocr-a", docA.id);
+
+    // conv-b's upload shares this exact content -- the file and its OCR
+    // cache entries must both survive.
+    expect(await storedFileExists(sha256)).toBe(true);
+    expect(readCacheRowCount()).toBeGreaterThan(0);
+
+    const docB = uploadedDocuments(getWritableDb(), "conv-ocr-b")[0];
+    await deleteSingleUpload("conv-ocr-b", docB.id);
+
+    expect(await storedFileExists(sha256)).toBe(false);
+    expect(readCacheRowCount()).toBe(0);
+  });
 });

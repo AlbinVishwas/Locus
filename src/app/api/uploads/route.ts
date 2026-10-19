@@ -2,7 +2,7 @@ import path from "node:path";
 import { indexPath } from "@/lib/search/indexDb";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 import { maxFilesPerConversation, maxUploadFileBytes, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
-import { deleteConversationUploads, indexUpload, type UploadStage } from "@/lib/uploads/pipeline";
+import { deleteConversationUploads, deleteSingleUpload, indexUpload, type UploadStage } from "@/lib/uploads/pipeline";
 import { measureStorageUsage } from "@/lib/uploads/storage";
 import { sanitizeOriginalFilename, validateUploadBytes } from "@/lib/uploads/validate";
 import { getWritableDb } from "@/lib/uploads/writableDb";
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
   if (usage.totalBytes + bytes.length > cap) {
     return new Response(
       `Storage is full: ${formatMB(usage.totalBytes)} MB of ${formatMB(cap)} MB used. ` +
-        `Delete some conversations' files, or raise STORAGE_CAP_BYTES.`,
+        `Remove some files or delete old conversations to free space.`,
       { status: 507 }
     );
   }
@@ -134,11 +134,31 @@ export async function GET(req: Request) {
   return Response.json({ documents: docs }, { headers: { "Cache-Control": "no-store" } });
 }
 
-/** Deletes every file (and index row) uploaded to one conversation. */
+/**
+ * Deletes files (and index rows) from one conversation: every one of
+ * them when called with just `conversationId` (a conversation being
+ * deleted entirely), or, with `docId` also given, just that one file --
+ * the per-file remove button. `docId` is scoped to `conversationId`
+ * server-side, so one conversation can never remove another's file.
+ */
 export async function DELETE(req: Request) {
-  const conversationId = new URL(req.url).searchParams.get("conversationId");
+  const url = new URL(req.url);
+  const conversationId = url.searchParams.get("conversationId");
   const idError = badConversationId(conversationId);
   if (idError) return new Response(idError, { status: 400 });
+
+  const docIdRaw = url.searchParams.get("docId");
+  if (docIdRaw !== null) {
+    const docId = Number(docIdRaw);
+    if (!Number.isInteger(docId) || docId <= 0) {
+      return new Response("`docId` must be a positive integer", { status: 400 });
+    }
+    const deleted = await deleteSingleUpload(conversationId as string, docId);
+    if (!deleted) {
+      return new Response("No such file in this conversation", { status: 404 });
+    }
+    return Response.json({ ok: true });
+  }
 
   await deleteConversationUploads(conversationId as string);
   return Response.json({ ok: true });

@@ -5,10 +5,13 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtractedPage } from "./store";
 import {
+  clearLegacyUploadExpiryOnce,
+  deleteConversationDocument,
   deleteConversationDocuments,
   expiredDocuments,
   insertUploadedDocument,
   openIndex,
+  replaceDocument,
   sha256StillReferenced,
   uploadedDocuments,
   upsertPageOcr,
@@ -315,5 +318,119 @@ describe("conversation scoping and cleanup", () => {
 
     expect(sha256StillReferenced(db, "shared-hash", idA)).toBe(true);
     expect(sha256StillReferenced(db, "shared-hash", idB)).toBe(true);
+  });
+
+  it("deleteConversationDocument removes one file, scoped to its conversation", () => {
+    const { docId: keepId } = insertUploadedDocument(db, {
+      conversationId: "conv-remove",
+      originalFilename: "Keep.pdf",
+      storedFilename: "keep.pdf",
+      sha256: "keep-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
+      pages: [textPage(1, "keep")],
+    });
+    const { docId: removeId } = insertUploadedDocument(db, {
+      conversationId: "conv-remove",
+      originalFilename: "Remove.pdf",
+      storedFilename: "remove.pdf",
+      sha256: "remove-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
+      pages: [textPage(1, "remove")],
+    });
+
+    const result = deleteConversationDocument(db, "conv-remove", removeId);
+    expect(result).toEqual({ sha256: "remove-hash" });
+
+    const remaining = uploadedDocuments(db, "conv-remove");
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(keepId);
+  });
+
+  it("deleteConversationDocument deletes nothing for the wrong conversationId", () => {
+    const { docId } = insertUploadedDocument(db, {
+      conversationId: "conv-owner",
+      originalFilename: "Owned.pdf",
+      storedFilename: "owned.pdf",
+      sha256: "owned-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: FAR_FUTURE,
+      pages: [textPage(1, "owned")],
+    });
+
+    expect(deleteConversationDocument(db, "conv-not-the-owner", docId)).toBeNull();
+    expect(uploadedDocuments(db, "conv-owner")).toHaveLength(1);
+  });
+});
+
+describe("clearLegacyUploadExpiryOnce", () => {
+  it("clears an existing upload's expires_at, left over from the old fixed-retention default", () => {
+    insertUploadedDocument(db, {
+      conversationId: "conv-legacy",
+      originalFilename: "Legacy.pdf",
+      storedFilename: "legacy.pdf",
+      sha256: "legacy-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: "2020-01-01T00:00:00.000Z",
+      expiresAt: "2020-01-15T00:00:00.000Z", // written under the old, now-gone 14-day default
+      pages: [textPage(1, "legacy")],
+    });
+
+    clearLegacyUploadExpiryOnce(db);
+
+    expect(uploadedDocuments(db, "conv-legacy")[0].expiresAt).toBeNull();
+  });
+
+  it("never touches the tender corpus (conversation_id IS NULL already has no expiry)", () => {
+    replaceDocument(db, {
+      filename: "tender.pdf",
+      sha256: "tender-hash",
+      sizeBytes: 1,
+      pageCount: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      error: null,
+      pages: [textPage(1, "a real tender document")],
+    });
+
+    clearLegacyUploadExpiryOnce(db);
+
+    const row = db.prepare("SELECT expires_at FROM documents WHERE filename = 'tender.pdf'").get() as {
+      expires_at: string | null;
+    };
+    expect(row.expires_at).toBeNull();
+  });
+
+  it("only runs once: a real expiry set after the migration already ran survives a second call", () => {
+    clearLegacyUploadExpiryOnce(db); // first call: nothing to clear yet, just marks it done
+
+    insertUploadedDocument(db, {
+      conversationId: "conv-after-migration",
+      originalFilename: "AfterMigration.pdf",
+      storedFilename: "after.pdf",
+      sha256: "after-hash",
+      sizeBytes: 1,
+      ocrLang: "eng",
+      settings: "v1",
+      uploadedAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: FAR_FUTURE, // a real, freshly-configured expiry
+      pages: [textPage(1, "after")],
+    });
+
+    clearLegacyUploadExpiryOnce(db); // must be a no-op now
+
+    expect(uploadedDocuments(db, "conv-after-migration")[0].expiresAt).toBe(FAR_FUTURE);
   });
 });

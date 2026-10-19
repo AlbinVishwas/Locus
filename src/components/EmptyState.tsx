@@ -13,6 +13,7 @@ interface EmptyStateProps {
   files: ConversationFile[];
   uploading: InProgressUpload[];
   onAttachFiles: (files: File[]) => void;
+  onRemoveFile: (docId: number) => void;
 }
 
 function greeting(hour: number): string {
@@ -29,6 +30,7 @@ export default function EmptyState({
   files,
   uploading,
   onAttachFiles,
+  onRemoveFile,
 }: EmptyStateProps) {
   // Read once on mount, not on every render -- a conversation left open
   // across midnight doesn't need to relabel itself live. This component
@@ -59,6 +61,7 @@ export default function EmptyState({
           files={files}
           uploading={uploading}
           onAttachFiles={onAttachFiles}
+          onRemoveFile={onRemoveFile}
         />
         <p className="mt-6 text-center text-[13px] text-secondary">
           Runs on this laptop. Uploaded files stay private to their conversation.

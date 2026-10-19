@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useCyclingWord } from "@/lib/useCyclingWord";
 import type { ConversationFile, UploadStageEvent } from "@/lib/uploadsClient";
 import StageLine from "./StageLine";
@@ -13,10 +14,12 @@ export interface InProgressUpload {
 interface AttachmentListProps {
   files: ConversationFile[];
   uploading: InProgressUpload[];
+  /** The per-file remove button, after the user confirms. */
+  onRemoveFile: (docId: number) => void;
 }
 
 /** Attach/drag-drop lives in ChatInput; this is just the visible result: what's uploading right now, and what's already attached to this conversation. Nothing to render for either list is the common case, so the composer stays unchanged until a file shows up. */
-export default function AttachmentList({ files, uploading }: AttachmentListProps) {
+export default function AttachmentList({ files, uploading, onRemoveFile }: AttachmentListProps) {
   if (files.length === 0 && uploading.length === 0) return null;
 
   return (
@@ -25,7 +28,7 @@ export default function AttachmentList({ files, uploading }: AttachmentListProps
         <UploadingChip key={u.tempId} upload={u} />
       ))}
       {files.map((f) => (
-        <FileChip key={f.id} file={f} />
+        <FileChip key={f.id} file={f} onRemove={() => onRemoveFile(f.id)} />
       ))}
     </div>
   );
@@ -102,42 +105,120 @@ function UploadingChip({ upload }: { upload: InProgressUpload }) {
   );
 }
 
-function FileChip({ file }: { file: ConversationFile }) {
+function FileChip({ file, onRemove }: { file: ConversationFile; onRemove: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+
+  // Confirming replaces the chip's whole content, the same inline pattern
+  // ConversationItem uses for "delete this chat?" -- no modal, per the
+  // design brief, and it's the one thing in the chip that still needs a
+  // second thought: everything else here is just status.
+  if (confirming) {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setConfirming(false);
+        }}
+      >
+        <span className="max-w-[140px] truncate text-secondary">Remove {file.originalFilename}?</span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-primary hover:bg-surface-hover"
+        >
+          Remove
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirming(false)}
+          className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-secondary hover:bg-surface-hover"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
   if (file.status === "failed") {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[13px] text-secondary">
+      <ChipShell onRemove={() => setConfirming(true)}>
         <DocumentIcon />
-        <span className="max-w-[160px] truncate" title={file.originalFilename}>
+        <span className="max-w-[160px] truncate text-secondary" title={file.originalFilename}>
           {file.originalFilename}
         </span>
-        <span>Couldn&apos;t be read</span>
-      </div>
+        <span className="text-secondary">Couldn&apos;t be read</span>
+      </ChipShell>
     );
   }
 
   if (file.status === "indexing") {
     return (
-      <div className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
+      <ChipShell onRemove={() => setConfirming(true)} bordered>
         <StageLine state="active" label={`Finishing OCR: ${file.originalFilename}`} />
-      </div>
+      </ChipShell>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[13px] text-primary">
+    <ChipShell onRemove={() => setConfirming(true)}>
       <DocumentIcon />
-      <span className="max-w-[160px] truncate" title={file.originalFilename}>
+      <span className="max-w-[160px] truncate text-primary" title={file.originalFilename}>
         {file.originalFilename}
       </span>
-      <span className="text-secondary">{expiresLabel(file.expiresAt)}</span>
+      <span className="text-secondary">
+        {file.pageCount} {file.pageCount === 1 ? "page" : "pages"}
+      </span>
+    </ChipShell>
+  );
+}
+
+/** The shared chip frame + remove (×) button every file state (besides the confirm prompt) renders inside. */
+function ChipShell({
+  children,
+  onRemove,
+  bordered = false,
+}: {
+  children: React.ReactNode;
+  onRemove: () => void;
+  bordered?: boolean;
+}) {
+  return (
+    <div
+      className={`group flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-[13px] ${
+        bordered ? "bg-surface" : ""
+      }`}
+    >
+      {children}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove file"
+        title="Remove file"
+        className="shrink-0 cursor-pointer rounded p-0.5 text-secondary opacity-60 hover:bg-surface-hover hover:text-primary hover:opacity-100"
+      >
+        <CloseIcon />
+      </button>
     </div>
   );
 }
 
-function expiresLabel(expiresAt: string): string {
-  const days = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
-  if (days <= 0) return "Expires today";
-  return `Expires in ${days} day${days === 1 ? "" : "s"}`;
+function CloseIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M18 6 6 18" />
+      <path d="M6 6l12 12" />
+    </svg>
+  );
 }
 
 function DocumentIcon() {

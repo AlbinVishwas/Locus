@@ -1,7 +1,9 @@
-/** Browser-side call to /api/config: display-only app config (the model name for the header pill). */
+/** Browser-side call to /api/config: display-only app config (the model name for the header pill, whether file retention is on). */
 
 export interface AppConfig {
   model: string;
+  /** Null unless LOCUS_RETENTION_DAYS is set -- files don't expire by default. */
+  retentionDays: number | null;
 }
 
 export async function getAppConfig(): Promise<AppConfig | null> {

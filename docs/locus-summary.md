@@ -61,16 +61,23 @@ Full details: [docs/sharing.md](sharing.md).
 | Max file size | 50 MB | The largest real tender PDF measured was 11 MB; this stays well under what a Cloudflare tunnel will carry in one request. |
 | Max files per conversation | 20 | Comfortably above the 13-document sample set this was built against. |
 | Total storage cap | 5 GB | A laptop-friendly number; the full 13-document sample set is under 40 MB. |
-| File retention | 14 days | Long enough to work a tender, short enough that a shared laptop doesn't quietly accumulate client documents forever. |
+| File retention | off (files don't expire) | Deleting something out from under someone on a timer is more surprising than useful by default. Set `LOCUS_RETENTION_DAYS` to bring automatic expiry back. |
 | Session length | 7 days | How long someone stays logged in after entering the passcode. |
 
 All five are environment variables and can be changed without touching
 code — see the README.
 
-When a file expires, it's actually deleted (file, search rows, and OCR
-cache if nothing else needs it) — not just hidden — and a conversation
-that relied on it says so the next time it's searched, rather than
-silently finding nothing.
+Since nothing expires on its own, freeing space is a manual, one-click
+action instead: every uploaded file in a conversation has its own remove
+button (with a confirmation), and deleting a conversation removes all of
+its files too. An upload that would go over the 5 GB cap is refused with
+a message saying how much is used and that removing files or old
+conversations frees space.
+
+If `LOCUS_RETENTION_DAYS` is set, an expired file is actually deleted
+(file, search rows, and OCR cache if nothing else needs it) — not just
+hidden — and a conversation that relied on it says so the next time it's
+searched, rather than silently finding nothing.
 
 ## Hindi text in the documents
 

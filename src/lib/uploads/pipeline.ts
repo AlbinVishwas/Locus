@@ -7,6 +7,7 @@ import { createLimiter } from "../../../scripts/indexer/exec";
 import { extractDocument, sourceAfterOcr, ocrPage, type ExtractContext } from "../../../scripts/indexer/extract";
 import { OcrCache } from "../../../scripts/indexer/ocrCache";
 import {
+  deleteConversationDocument,
   deleteConversationDocuments,
   insertUploadedDocument,
   sha256StillReferenced,
@@ -97,6 +98,7 @@ export async function indexUpload(options: IndexUploadOptions): Promise<void> {
     onStage({ stage: "indexing" });
 
     const now = new Date();
+    const retention = retentionMs();
     const db = getWritableDb();
     const { docId, pendingPages } = insertUploadedDocument(db, {
       conversationId,
@@ -107,7 +109,7 @@ export async function indexUpload(options: IndexUploadOptions): Promise<void> {
       ocrLang: config.ocrLang,
       settings: settingsKey(config),
       uploadedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + retentionMs()).toISOString(),
+      expiresAt: retention === null ? null : new Date(now.getTime() + retention).toISOString(),
       pages: extracted.pages,
     });
 
@@ -163,4 +165,31 @@ export async function deleteConversationUploads(conversationId: string): Promise
     await deleteStoredFile(doc.sha256);
     ocrCache.deleteForFile(doc.sha256);
   }
+}
+
+/**
+ * Removes one uploaded document -- the per-file remove button, as opposed
+ * to deleteConversationUploads' whole-conversation cascade: its index
+ * rows, and the physical file and OCR cache entries too, unless another
+ * document (in this or any other conversation) still references that same
+ * content. Returns false (nothing deleted) if no such document exists in
+ * that conversation, so the route can answer 404 instead of a false "ok".
+ */
+export async function deleteSingleUpload(conversationId: string, docId: number): Promise<boolean> {
+  const db = getWritableDb();
+  const deleted = deleteConversationDocument(db, conversationId, docId);
+  if (!deleted) return false;
+
+  const config = loadConfig();
+  const { ocrCache } = sharedContext(config);
+  if (!sha256StillReferenced(db, deleted.sha256, docId)) {
+    await deleteStoredFile(deleted.sha256);
+    ocrCache.deleteForFile(deleted.sha256);
+  }
+
+  // Same incremental reclaim runRetentionCleanup does after its own
+  // deletes -- small batches, no long exclusive lock, so a live search
+  // isn't held up by a remove button click.
+  db.pragma("incremental_vacuum");
+  return true;
 }

@@ -82,6 +82,26 @@ Indexer settings (environment variables, all optional):
 | `OCR_CONCURRENCY` | cores - 2 | Parallel OCR processes |
 | `PAGE_TIMEOUT_MS` | `120000` | Per tool call; a page over it is recorded as failed |
 
+## Uploads
+
+Attach PDFs to a conversation and ask about them in chat (see
+[docs/locus-summary.md](docs/locus-summary.md)). Off by default outside
+development -- set `LOCUS_ENABLE_UPLOADS=true` only for a trusted local
+deployment.
+
+Files don't expire. Once uploaded, a file stays until it's removed (each
+file in a conversation has its own remove button) or its conversation is
+deleted. A shared 5 GB cap (configurable) covers everything uploaded
+across every conversation; an upload that would go over it is refused
+with a message naming how much is used.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LOCUS_RETENTION_DAYS` | *(unset: never expires)* | Set to re-enable automatic expiry -- e.g. for a shared machine that should forget files on its own -- after this many days from upload. |
+| `STORAGE_CAP_BYTES` | `5368709120` (5 GB) | Total size of every uploaded file, across every conversation, before uploads are refused. |
+| `MAX_UPLOAD_FILE_BYTES` | `52428800` (50 MB) | Largest single file accepted. |
+| `MAX_FILES_PER_CONVERSATION` | `20` | Per-conversation cap, independent of the storage cap. |
+
 ## Learn More
 
 Built with [Next.js](https://nextjs.org). See the

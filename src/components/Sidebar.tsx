@@ -152,7 +152,7 @@ function StorageCard() {
       <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-line" aria-hidden>
         <div className="h-full rounded-full bg-cream" style={{ width: `${pct}%` }} />
       </div>
-      <p className="mt-1.5 text-[11px] text-secondary">Files are removed 14 days after upload.</p>
+      <p className="mt-1.5 text-[11px] text-secondary">Remove files or old chats to free space.</p>
     </div>
   );
 }

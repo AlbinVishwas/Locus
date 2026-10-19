@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { _resetEnvWarningsForTests } from "../env";
-import { maxFilesPerConversation, maxUploadFileBytes, retentionDays, storageCapBytes, uploadsEnabled } from "./config";
+import {
+  maxFilesPerConversation,
+  maxUploadFileBytes,
+  retentionDays,
+  retentionMs,
+  storageCapBytes,
+  uploadsEnabled,
+} from "./config";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -8,7 +15,7 @@ afterEach(() => {
   delete process.env.MAX_UPLOAD_FILE_BYTES;
   delete process.env.MAX_FILES_PER_CONVERSATION;
   delete process.env.STORAGE_CAP_BYTES;
-  delete process.env.RETENTION_DAYS;
+  delete process.env.LOCUS_RETENTION_DAYS;
 });
 
 describe("uploadsEnabled", () => {
@@ -44,16 +51,33 @@ describe("env-configurable limits", () => {
     expect(maxUploadFileBytes()).toBeGreaterThan(0);
     expect(maxFilesPerConversation()).toBeGreaterThan(0);
     expect(storageCapBytes()).toBeGreaterThan(0);
-    expect(retentionDays()).toBeGreaterThan(0);
   });
 
   it("respect an override", () => {
     process.env.MAX_FILES_PER_CONVERSATION = "3";
     expect(maxFilesPerConversation()).toBe(3);
   });
+});
+
+describe("retentionDays / retentionMs", () => {
+  it("is off (null) by default -- files don't expire unless explicitly configured", () => {
+    expect(retentionDays()).toBeNull();
+    expect(retentionMs()).toBeNull();
+  });
+
+  it("returns the configured number of days, and the matching millisecond value", () => {
+    process.env.LOCUS_RETENTION_DAYS = "14";
+    expect(retentionDays()).toBe(14);
+    expect(retentionMs()).toBe(14 * 24 * 60 * 60 * 1000);
+  });
 
   it("rejects a non-positive override rather than silently ignoring it", () => {
-    process.env.RETENTION_DAYS = "-1";
+    process.env.LOCUS_RETENTION_DAYS = "-1";
+    expect(() => retentionDays()).toThrow();
+  });
+
+  it("rejects a non-numeric override", () => {
+    process.env.LOCUS_RETENTION_DAYS = "forever";
     expect(() => retentionDays()).toThrow();
   });
 });

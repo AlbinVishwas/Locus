@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSSEStream } from "@/lib/parseSSE";
 import { createId } from "@/lib/id";
+import { getAppConfig } from "@/lib/configClient";
 import { toHistoryPayload } from "@/lib/history";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import {
+  deleteConversationFile,
   listConversationFiles,
   uploadFile,
   type ConversationFile,
@@ -53,6 +55,19 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
     listConversationFiles(conversation.id).then(setFiles);
   }, [conversation.id]);
 
+  // Read once, not re-checked per message: whether files can expire at
+  // all right now (LOCUS_RETENTION_DAYS set). Gates the "this
+  // conversation's files expired" notice below -- without retention
+  // turned on, a conversation that no longer has files lost them because
+  // someone removed them, not because they expired, and the notice
+  // would be telling a story that didn't happen.
+  const retentionEnabledRef = useRef(false);
+  useEffect(() => {
+    getAppConfig().then((c) => {
+      retentionEnabledRef.current = c?.retentionDays != null;
+    });
+  }, []);
+
   useEffect(() => {
     refreshFiles();
   }, [refreshFiles]);
@@ -85,6 +100,19 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           );
         });
       }
+    },
+    [conversation.id, refreshFiles]
+  );
+
+  // The per-file remove button, after the user confirms in AttachmentList.
+  // Optimistic: drops the chip immediately rather than waiting on the
+  // round trip, since the server call is a straightforward delete with
+  // nothing meaningful to show mid-flight -- refreshFiles() afterwards
+  // reconciles against what the server actually has either way.
+  const handleRemoveFile = useCallback(
+    (docId: number) => {
+      setFiles((prev) => prev.filter((f) => f.id !== docId));
+      deleteConversationFile(conversation.id, docId).then(() => refreshFiles());
     },
     [conversation.id, refreshFiles]
   );
@@ -191,14 +219,17 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       commitMessages((prev) => [...prev, userMessage, assistantMessage]);
       setIsStreaming(true);
 
-      // Files expiring is normal, expected behaviour (retention does its
-      // job), but a silent conversation that used to find things and now
-      // never does would read as the feature quietly breaking. Checked
-      // fresh on every send, not from possibly-stale mount-time state: a
-      // tab left open across the 14-day retention window shouldn't need a
-      // reload to notice.
+      // Files expiring is normal, expected behaviour when retention is
+      // turned on (it does its job), but a silent conversation that used
+      // to find things and now never does would read as the feature
+      // quietly breaking. Checked fresh on every send, not from
+      // possibly-stale mount-time state: a tab left open across the
+      // retention window shouldn't need a reload to notice. Skipped
+      // entirely with retention off (the default): there, a conversation
+      // with no files any more lost them because someone removed them,
+      // not because they expired.
       let filesExpiredNoticeShown = false;
-      const hadFilesEver = messages.some((m) => m.searchResult != null);
+      const hadFilesEver = retentionEnabledRef.current && messages.some((m) => m.searchResult != null);
       if (hadFilesEver) {
         const stillHasFiles = (await listConversationFiles(conversation.id)).length > 0;
         if (!stillHasFiles) {
@@ -338,6 +369,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           files={files}
           uploading={uploading}
           onAttachFiles={handleAttachFiles}
+          onRemoveFile={handleRemoveFile}
         />
       </div>
     );
@@ -364,6 +396,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         files={files}
         uploading={uploading}
         onAttachFiles={handleAttachFiles}
+        onRemoveFile={handleRemoveFile}
       />
     </div>
   );
