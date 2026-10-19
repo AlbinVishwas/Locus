@@ -1,8 +1,8 @@
 # Sharing Locus
 
-One command shares this laptop's Locus with someone else, over a public
-link, with your documents and your local model — nothing moves to the
-cloud.
+One command shares this laptop's Locus with someone else, over one
+permanent public link, with your documents and your local model —
+nothing moves to the cloud.
 
 ## Running it
 
@@ -24,20 +24,43 @@ What it does, in order:
    production, and this is the one place they're meant to be on.
 5. Runs `caffeinate -i` for as long as the server runs, so the laptop
    doesn't go to sleep mid-conversation.
-6. Starts a Cloudflare quick tunnel to port 3000 and prints the public
-   URL.
+6. Starts a Cloudflare quick tunnel to port 3000, gets back a one-off
+   `*.trycloudflare.com` URL, then points the permanent link below at it.
 
 Press **Ctrl+C** to stop everything — the tunnel, the server, and
-caffeinate all stop together.
+caffeinate all stop together. The permanent link then shows a small
+"Locus is offline right now" page instead of forwarding anywhere, until
+the next `npm run share`.
+
+## One permanent link
+
+**<https://local-chat-one-ivory.vercel.app>** always points at whichever
+`npm run share` is currently running, anywhere. The underlying tunnel URL
+changes every run, but this link doesn't — `npm run share` updates it for
+you as its last step, by setting the `LOCUS_URL` environment variable on
+the `redirect/` app (a separate, minimal Vercel project that does nothing
+but check whether `LOCUS_URL` answers and either redirect there or show
+the offline page — it has no access to Locus's code, data, or uploads)
+and redeploying it.
+
+If that Vercel step fails (not logged in, no network), `npm run share`
+still prints the tunnel URL as a fallback and explains why — it never
+stops Locus itself over this. Pass `--no-vercel` to skip updating the
+link entirely (e.g. while offline, or testing locally):
+
+```bash
+npm run share -- --no-vercel
+```
 
 ## What the other person needs
 
-- The URL printed in the terminal.
+- The permanent link above (or the tunnel URL printed in the terminal,
+  if you used `--no-vercel`).
 - The passcode from `LOCUS_PASSCODE` in your `.env.local`.
 
-They open the URL, enter the passcode, and use it like any other web app:
-chat, attach PDFs, ask about them. Everything runs on your laptop; nothing
-is uploaded anywhere except to this machine.
+They open the link, enter the passcode, and use it like any other web
+app: chat, attach PDFs, ask about them. Everything runs on your laptop;
+nothing is uploaded anywhere except to this machine.
 
 ## One-time setup
 
@@ -55,30 +78,26 @@ Set a passcode once, in `.env.local`:
 LOCUS_PASSCODE=choose-something-only-you-and-they-know
 ```
 
-## If the URL changes
+## If the tunnel URL changes
 
 A Cloudflare **quick** tunnel (what `npm run share` uses) gets a new
-random `*.trycloudflare.com` address every time you run it. If you stop
-and restart `npm run share` — including just to pick up a code change —
-send the new URL to whoever's using it.
+random `*.trycloudflare.com` address every time you run it. That's fine —
+the permanent link above gets pointed at the new one automatically, each
+time `npm run share` runs, including just to pick up a code change. The
+person you're sharing with never needs the raw tunnel URL at all.
 
-## A fixed URL instead (later, optional)
+## The redirect app itself
 
-A **named** tunnel keeps the same address across restarts. It needs:
-
-- A Cloudflare account (free tier is fine).
-- A domain added to that account (Cloudflare doesn't sell domains itself,
-  but you can point one you already own at it, or buy one from any
-  registrar and add it).
-- `cloudflared tunnel login`, then `cloudflared tunnel create <name>`, then
-  a DNS route for it (`cloudflared tunnel route dns <name> <hostname>`).
-
-None of this is set up yet — it's a deliberate choice to leave for later,
-since it needs an account and a domain decision this script shouldn't make
-for you. When you want it, the quick-tunnel line in `scripts/share.ts`
-(`cloudflared tunnel --url ...`) is what to replace with
-`cloudflared tunnel run <name>`, pointed at a small `config.yml` instead of
-a URL.
+`redirect/` is a separate, minimal Vercel project, deployed on its own
+(`vercel deploy --prod` from inside `redirect/`, already linked to the
+`chat` project that serves `local-chat-one-ivory.vercel.app`). It has no
+dependencies and no access to anything else in this repo — just
+`api/redirect.js`, which reads `LOCUS_URL`, checks whether it currently
+answers, and either 307-redirects there (keeping the path) or renders the
+offline page, with `Cache-Control: no-store` so a new link takes effect
+immediately. `npm run share` manages its `LOCUS_URL` env var for you; you
+shouldn't need to touch `redirect/` directly unless the offline page
+itself needs to change.
 
 ## Troubleshooting
 

@@ -1,0 +1,6 @@
+{
+  "name": "locus-redirect",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Forwards local-chat-one-ivory.vercel.app to whichever tunnel URL is currently serving Locus. No access to the main app, data/, or uploads -- deployed on its own."
+}

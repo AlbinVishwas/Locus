@@ -17,6 +17,9 @@ import path from "node:path";
 const PORT = 3000;
 const LM_STUDIO_BASE_URL = "http://localhost:1234/v1";
 const READY_TIMEOUT_MS = 30_000;
+const NO_VERCEL = process.argv.includes("--no-vercel");
+const VERCEL_REDIRECT_DIR = path.resolve("redirect");
+const VERCEL_PUBLIC_URL = "https://local-chat-one-ivory.vercel.app";
 
 function log(message: string): void {
   console.log(`[share] ${message}`);
@@ -156,6 +159,43 @@ function ensureSessionSecret(): string {
   return generated;
 }
 
+/**
+ * Points the already-deployed redirect/ app (the permanent, public
+ * local-chat-one-ivory.vercel.app link) at this run's tunnel URL, so
+ * sharing stays a single command even though the tunnel URL changes
+ * every time. Best-effort: a failure here never stops Locus itself --
+ * the tunnel link printed below always works on its own.
+ */
+function updateVercelRedirect(tunnelUrl: string): void {
+  if (NO_VERCEL) return;
+  log("Updating the public redirect link…");
+  try {
+    try {
+      execFileSync("npx", ["--yes", "vercel", "env", "rm", "LOCUS_URL", "production", "--yes"], {
+        cwd: VERCEL_REDIRECT_DIR,
+        stdio: "ignore",
+      });
+    } catch {
+      // Fine if LOCUS_URL didn't exist yet (first run).
+    }
+    execFileSync(
+      "npx",
+      ["--yes", "vercel", "env", "add", "LOCUS_URL", "production", "--value", tunnelUrl, "--yes"],
+      { cwd: VERCEL_REDIRECT_DIR, stdio: "ignore" }
+    );
+    execFileSync("npx", ["--yes", "vercel", "deploy", "--prod", "--yes"], {
+      cwd: VERCEL_REDIRECT_DIR,
+      stdio: "ignore",
+    });
+    log(`Share this: ${VERCEL_PUBLIC_URL}`);
+  } catch (err) {
+    log(
+      `Could not update the Vercel redirect (${err instanceof Error ? err.message : err}). ` +
+        `Use the tunnel link below instead -- re-run "npm run share" once Vercel is reachable to fix the public link.`
+    );
+  }
+}
+
 const CLOUDFLARE_URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 
 function startTunnel(port: number): Promise<{ process: ChildProcess; url: string }> {
@@ -261,8 +301,9 @@ async function main() {
   }
 
   console.log("");
-  console.log(`[share] Public URL: ${tunnel.url}`);
-  console.log(`[share] Share that link plus the LOCUS_PASSCODE with whoever needs it.`);
+  console.log(`[share] Tunnel URL: ${tunnel.url}`);
+  updateVercelRedirect(tunnel.url);
+  console.log(`[share] Share the link above plus the LOCUS_PASSCODE with whoever needs it.`);
   console.log(`[share] Press Ctrl+C to stop.`);
   console.log("");
 
