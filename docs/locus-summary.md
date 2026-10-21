@@ -58,7 +58,7 @@ Full details: [docs/sharing.md](sharing.md).
 
 | Setting | Default | Reasoning |
 | --- | --- | --- |
-| Max file size | 50 MB | The largest real tender PDF measured was 11 MB; this stays well under what a Cloudflare tunnel will carry in one request. |
+| Max file size | 100 MB | Real scanned tenders have reached 32 MB; this matches the most a Cloudflare tunnel will carry in one request. |
 | Max files per conversation | 20 | Comfortably above the 13-document sample set this was built against. |
 | Total storage cap | 5 GB | A laptop-friendly number; the full 13-document sample set is under 40 MB. |
 | File retention | off (files don't expire) | Deleting something out from under someone on a timer is more surprising than useful by default. Set `LOCUS_RETENTION_DAYS` to bring automatic expiry back. |

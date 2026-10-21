@@ -14,6 +14,13 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "/*": ["./data/**/*"],
   },
+  experimental: {
+    // The proxy buffers request bodies and silently truncates them past
+    // this limit (default 10MB), which turns any upload over 10MB into a
+    // malformed multipart body. Sized just above MAX_UPLOAD_FILE_BYTES'
+    // 100MB default to leave room for the multipart envelope.
+    proxyClientMaxBodySize: "110mb",
+  },
 };
 
 export default nextConfig;

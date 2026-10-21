@@ -99,7 +99,7 @@ with a message naming how much is used.
 | --- | --- | --- |
 | `LOCUS_RETENTION_DAYS` | *(unset: never expires)* | Set to re-enable automatic expiry -- e.g. for a shared machine that should forget files on its own -- after this many days from upload. |
 | `STORAGE_CAP_BYTES` | `5368709120` (5 GB) | Total size of every uploaded file, across every conversation, before uploads are refused. |
-| `MAX_UPLOAD_FILE_BYTES` | `52428800` (50 MB) | Largest single file accepted. |
+| `MAX_UPLOAD_FILE_BYTES` | `104857600` (100 MB) | Largest single file accepted. |
 | `MAX_FILES_PER_CONVERSATION` | `20` | Per-conversation cap, independent of the storage cap. |
 
 ## Learn More

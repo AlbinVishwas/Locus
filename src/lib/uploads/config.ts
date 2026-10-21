@@ -19,13 +19,13 @@ export function uploadsEnabled(): boolean {
 }
 
 /**
- * 50 MB: the largest tender PDF measured during development was 11 MB, so
- * this is generous headroom for a real tender document while staying well
- * under the ~100 MB request-body ceiling a Cloudflare quick tunnel imposes
- * (see docs/sharing.md) -- a file that would fail at the tunnel fails with a
- * clear message here instead, before any upload is attempted.
+ * 100 MB: the largest tender PDF measured during development was 11 MB, but
+ * real scanned tenders have reached 32 MB, so this leaves room for the rest.
+ * It matches the ~100 MB request-body ceiling a Cloudflare quick tunnel
+ * imposes (see docs/sharing.md); a file right at this size can still be
+ * refused by the tunnel itself once the multipart envelope is added.
  */
-const DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
+const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 /**
  * 20: comfortably above the 13-document sample set this feature was built
