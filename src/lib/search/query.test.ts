@@ -106,8 +106,10 @@ beforeAll(() => {
   corpus = loadCorpus(db);
 });
 
+// The oracle keys pages as "<docId>:<filename>#<page>"; these fixtures have
+// unique filenames, so the name alone reads better in the assertions.
 const hitKeys = (query: string, mode: "exact" | "loose" = "exact") =>
-  [...viaIndex(db, query, mode).pages].sort();
+  [...viaIndex(db, query, mode).pages].map((k) => k.replace(/^\d+:/, "")).sort();
 
 describe("search: required edge cases", () => {
   it("finds a phrase that crosses a line break in the PDF text", () => {

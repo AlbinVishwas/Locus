@@ -11,29 +11,44 @@ import { prepareQuery, search } from "../../src/lib/search/query";
  * It re-derives the comparable text from `body` rather than trusting the
  * stored `search`/`loose` columns, so a bug in what the indexer stored would
  * show up as a difference too.
+ *
+ * Pages and filenames are keyed by document id, not name: uploads can share
+ * a name (the same file uploaded into two conversations), and an upload is
+ * shown -- and matched by filename -- under the name the user gave it
+ * (original_filename), not its content-addressed name on disk. Expired
+ * uploads are left out, as search() leaves them out.
  */
 export interface Corpus {
-  pages: Array<{ key: string; filename: string; exact: string; loose: string }>;
-  filenames: Array<{ filename: string; exact: string; loose: string }>;
+  pages: Array<{ key: string; exact: string; loose: string }>;
+  filenames: Array<{ key: string; exact: string; loose: string }>;
+}
+
+function docKey(id: number, name: string): string {
+  return `${id}:${name}`;
 }
 
 export function loadCorpus(db: Database.Database): Corpus {
+  const nowIso = new Date().toISOString();
+  const live = "(d.expires_at IS NULL OR d.expires_at > ?)";
   const rows = db
     .prepare(
-      `SELECT d.filename, p.page_no AS pageNo, t.body
-       FROM texts t JOIN pages p ON p.id = t.page_id JOIN documents d ON d.id = p.doc_id`
+      `SELECT d.id, COALESCE(d.original_filename, d.filename) AS name, p.page_no AS pageNo, t.body
+       FROM texts t JOIN pages p ON p.id = t.page_id JOIN documents d ON d.id = p.doc_id
+       WHERE ${live}`
     )
-    .all() as Array<{ filename: string; pageNo: number; body: string }>;
-  const docs = db.prepare("SELECT filename FROM documents").pluck().all() as string[];
+    .all(nowIso) as Array<{ id: number; name: string; pageNo: number; body: string }>;
+  const docs = db
+    .prepare(`SELECT d.id, COALESCE(d.original_filename, d.filename) AS name FROM documents d WHERE ${live}`)
+    .all(nowIso) as Array<{ id: number; name: string }>;
   return {
     pages: rows.map((r) => {
       const exact = foldCase(r.body);
-      return { key: `${r.filename}#${r.pageNo}`, filename: r.filename, exact, loose: loosen(exact) };
+      return { key: `${docKey(r.id, r.name)}#${r.pageNo}`, exact, loose: loosen(exact) };
     }),
-    filenames: docs.map((filename) => {
+    filenames: docs.map((d) => {
       // Same path the indexer takes: normalize, then fold, then loosen.
-      const exact = prepareQuery(filename, "exact");
-      return { filename, exact, loose: loosen(exact) };
+      const exact = prepareQuery(d.name, "exact");
+      return { key: docKey(d.id, d.name), exact, loose: loosen(exact) };
     }),
   };
 }
@@ -44,7 +59,7 @@ export function bruteForce(corpus: Corpus, query: string, mode: SearchMode) {
   const filenames = new Set<string>();
   if (q === "") return { pages, filenames };
   for (const p of corpus.pages) if (p[mode].includes(q)) pages.add(p.key);
-  for (const f of corpus.filenames) if (f[mode].includes(q)) filenames.add(f.filename);
+  for (const f of corpus.filenames) if (f[mode].includes(q)) filenames.add(f.key);
   return { pages, filenames };
 }
 
@@ -53,8 +68,10 @@ export function viaIndex(db: Database.Database, query: string, mode: SearchMode)
   const result = search(db, query, { mode, offset: 0, limit: Number.MAX_SAFE_INTEGER });
   return {
     result,
-    pages: new Set(result.hits.map((h) => `${h.filename}#${h.pageNo}`)),
-    filenames: new Set(result.documents.filter((d) => d.filenameMatch).map((d) => d.filename)),
+    pages: new Set(result.hits.map((h) => `${docKey(h.docId, h.filename)}#${h.pageNo}`)),
+    filenames: new Set(
+      result.documents.filter((d) => d.filenameMatch).map((d) => docKey(d.docId, d.filename))
+    ),
   };
 }
 
