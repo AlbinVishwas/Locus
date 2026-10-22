@@ -63,6 +63,12 @@ export interface DisplayMessage {
    * record of a document once it's deleted, by design.
    */
   filesExpired?: boolean;
+  /**
+   * Search-only mode (chat turned off): this turn was sent in a session
+   * with no files yet, so instead of a search it shows a prompt to upload
+   * documents. Set client-side from /api/session-search's "no-files".
+   */
+  noFiles?: boolean;
 }
 
 export interface Conversation {

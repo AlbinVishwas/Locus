@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConversationFile } from "@/lib/uploadsClient";
 import AttachmentList, { type InProgressUpload } from "./AttachmentList";
+import { useFeatures } from "./FeaturesProvider";
 
 interface ChatInputProps {
   isStreaming: boolean;
@@ -25,6 +26,7 @@ interface ChatInputProps {
 const MAX_TEXTAREA_HEIGHT = 214;
 
 const DEFAULT_PLACEHOLDER = "Ask anything, or drop PDFs to search inside them";
+const SEARCH_PLACEHOLDER = "Type a word or phrase to find it in your files";
 const LINK_PLACEHOLDER = "Paste a link…";
 
 export default function ChatInput({
@@ -37,6 +39,7 @@ export default function ChatInput({
   onRemoveFile,
   variant = "pinned",
 }: ChatInputProps) {
+  const { chatEnabled } = useFeatures();
   const [value, setValue] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   // Cosmetic only: "Read a link" swaps the placeholder to hint at what to
@@ -169,9 +172,15 @@ export default function ChatInput({
         onCompositionEnd={() => (isComposingRef.current = false)}
         onBlur={() => setLinkMode(false)}
         rows={1}
-        aria-label="Message"
+        aria-label={chatEnabled ? "Message" : "Search your files"}
         placeholder={
-          isDragOver ? "Drop a PDF to attach it" : linkMode ? LINK_PLACEHOLDER : DEFAULT_PLACEHOLDER
+          isDragOver
+            ? "Drop a PDF to attach it"
+            : linkMode
+              ? LINK_PLACEHOLDER
+              : chatEnabled
+                ? DEFAULT_PLACEHOLDER
+                : SEARCH_PLACEHOLDER
         }
         className="max-h-[214px] flex-1 resize-none bg-transparent py-1.5 font-text text-[15px] leading-[1.7] text-primary outline-none placeholder:text-secondary"
       />
@@ -179,7 +188,15 @@ export default function ChatInput({
         type="button"
         onClick={isStreaming ? onStop : submit}
         disabled={!isStreaming && !canSend}
-        aria-label={isStreaming ? "Stop generating" : "Send message"}
+        aria-label={
+          isStreaming
+            ? chatEnabled
+              ? "Stop generating"
+              : "Stop searching"
+            : chatEnabled
+              ? "Send message"
+              : "Search"
+        }
         className="mb-1 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-ink transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
       >
         {isStreaming ? <StopIcon /> : <SendIcon />}
@@ -193,11 +210,15 @@ export default function ChatInput({
         Upload documents
       </ChipButton>
       <ChipButton onClick={insertQuotePair} icon={<QuoteIcon />}>
-        Find a phrase in files
+        {chatEnabled ? "Find a phrase in files" : "Find a phrase"}
       </ChipButton>
-      <ChipButton onClick={focusForLink} icon={<LinkIcon />}>
-        Read a link
-      </ChipButton>
+      {/* Reading a link is a model feature (urlContext.ts feeds the page
+          to LM Studio), so it goes away with chat. */}
+      {chatEnabled && (
+        <ChipButton onClick={focusForLink} icon={<LinkIcon />}>
+          Read a link
+        </ChipButton>
+      )}
     </div>
   );
 

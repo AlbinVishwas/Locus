@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getStorageInfo, type StorageInfo } from "@/lib/uploadsClient";
 import { useConversations } from "./ConversationsProvider";
 import ConversationItem from "./ConversationItem";
+import { useFeatures } from "./FeaturesProvider";
 
 interface SidebarProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ const MOBILE_QUERY = "(max-width: 767px)";
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const router = useRouter();
+  const { chatEnabled } = useFeatures();
   const {
     conversations,
     activeConversationId,
@@ -83,16 +85,18 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-primary hover:bg-surface-hover"
           >
             <PlusIcon />
-            New chat
+            {chatEnabled ? "New chat" : "New session"}
           </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-3">
           <p className="px-2.5 pb-1 text-[11px] font-medium tracking-wide text-secondary uppercase">
-            Recent
+            {chatEnabled ? "Recent" : "Sessions"}
           </p>
           {sorted.length === 0 ? (
-            <p className="px-2.5 py-2 text-[13px] text-secondary">No conversations yet.</p>
+            <p className="px-2.5 py-2 text-[13px] text-secondary">
+              {chatEnabled ? "No conversations yet." : "No sessions yet."}
+            </p>
           ) : (
             <div className="flex flex-col gap-0.5">
               {sorted.map((conversation) => (
@@ -134,6 +138,7 @@ function LogoMark() {
 
 /** Usage against the storage cap, with a thin cream bar, plus the retention policy in plain words -- so "why did my file disappear" is answered right where files get uploaded, not just in a doc. Renders nothing if uploads are disabled (the endpoint still answers, since measuring disk usage doesn't depend on the flag, but showing a cap for a feature that's off would be confusing) or the request fails. */
 function StorageCard() {
+  const { chatEnabled } = useFeatures();
   const [info, setInfo] = useState<StorageInfo | null>(null);
 
   useEffect(() => {
@@ -152,7 +157,7 @@ function StorageCard() {
       <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-line" aria-hidden>
         <div className="h-full rounded-full bg-cream" style={{ width: `${pct}%` }} />
       </div>
-      <p className="mt-1.5 text-[11px] text-secondary">Remove files or old chats to free space.</p>
+      <p className="mt-1.5 text-[11px] text-secondary">Remove files or old {chatEnabled ? "chats" : "sessions"} to free space.</p>
     </div>
   );
 }

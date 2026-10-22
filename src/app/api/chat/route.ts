@@ -2,6 +2,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
+import { CHAT_DISABLED_MESSAGE, isChatEnabled } from "@/config/features";
 import type { StreamEvent } from "@/lib/types";
 import { DOCUMENT_SEARCH_SYSTEM_NOTE, runDocumentSearch } from "@/lib/chat/documentSearch";
 import { shouldSuppressReasoning, withReasoningSuppressed } from "@/lib/chat/reasoning";
@@ -106,6 +107,13 @@ function withExpandedUserMessage(
 }
 
 export async function POST(req: Request) {
+  // Checked before the body is even read: with chat off, nothing about a
+  // request here -- not its links, not its messages -- reaches LM Studio
+  // or the URL fetcher. Search-only sessions use /api/session-search.
+  if (!isChatEnabled()) {
+    return new Response(CHAT_DISABLED_MESSAGE, { status: 403 });
+  }
+
   let messages: ChatCompletionMessageParam[];
   let conversationId: string | null;
   try {

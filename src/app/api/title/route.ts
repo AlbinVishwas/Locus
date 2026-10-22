@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { CHAT_DISABLED_MESSAGE, isChatEnabled } from "@/config/features";
 import { cleanTitle } from "@/lib/conversations";
 import { shouldSuppressReasoning, withReasoningSuppressed } from "@/lib/chat/reasoning";
 import { lmStudioClient } from "@/lib/lmStudioClient";
@@ -31,6 +32,12 @@ const SYSTEM_PROMPT = [
  * ConversationsProvider.tsx and src/lib/titleClient.ts.
  */
 export async function POST(req: Request) {
+  // Titling is a model call, so it goes with chat: with chat off a
+  // session keeps its first-message title (deriveTitle) for good.
+  if (!isChatEnabled()) {
+    return new Response(CHAT_DISABLED_MESSAGE, { status: 403 });
+  }
+
   let message: unknown;
   try {
     const body = await req.json();

@@ -5,6 +5,7 @@ import { parseSSEStream } from "@/lib/parseSSE";
 import { createId } from "@/lib/id";
 import { getAppConfig } from "@/lib/configClient";
 import { toHistoryPayload } from "@/lib/history";
+import { searchSession } from "@/lib/sessionSearchClient";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import {
   deleteConversationFile,
@@ -15,6 +16,7 @@ import {
 import type { InProgressUpload } from "./AttachmentList";
 import ConversationHeader from "./ConversationHeader";
 import EmptyState from "./EmptyState";
+import { useFeatures } from "./FeaturesProvider";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 
@@ -36,6 +38,7 @@ interface ChatProps {
  * this component does not own the conversation list itself.
  */
 export default function Chat({ conversation, onMessagesChange }: ChatProps) {
+  const { chatEnabled } = useFeatures();
   const [messages, setMessages] = useState<DisplayMessage[]>(conversation.messages);
   const [isStreaming, setIsStreaming] = useState(false);
   // Transient read-phase state for the in-flight turn only. Deliberately not
@@ -352,6 +355,84 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
     [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id]
   );
 
+  /**
+   * Chat turned off (src/config/features.ts): a turn is one search over
+   * this session's files and nothing more -- /api/session-search, never
+   * /api/chat, so no message, link or title ever reaches LM Studio. The
+   * results card is the whole answer, even when it found nothing.
+   */
+  const sendSearch = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isStreaming) return;
+
+      shouldAutoScrollRef.current = true;
+
+      const userMessage: DisplayMessage = {
+        id: createId(),
+        role: "user",
+        content: trimmed,
+        reasoning: "",
+        reasoningMs: null,
+        isStreaming: false,
+      };
+      const assistantId = createId();
+      const assistantMessage: DisplayMessage = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        reasoning: "",
+        reasoningMs: null,
+        isStreaming: true,
+        failure: null,
+      };
+
+      commitMessages((prev) => [...prev, userMessage, assistantMessage]);
+      setIsStreaming(true);
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      try {
+        const outcome = await searchSession(conversation.id, trimmed, controller.signal);
+        if (outcome.status === "ok") {
+          patchAssistantMessage(assistantId, (m) => ({
+            ...m,
+            searchResult: outcome.result,
+            looseAlternative: outcome.looseAlternative,
+          }));
+        } else {
+          // Same distinction as sendMessage's expired-files notice: with
+          // retention on, a session that used to have results lost its
+          // files to expiry; otherwise it simply has none yet.
+          const filesExpired =
+            retentionEnabledRef.current && messages.some((m) => m.searchResult != null);
+          patchAssistantMessage(assistantId, (m) =>
+            filesExpired ? { ...m, filesExpired: true } : { ...m, noFiles: true }
+          );
+        }
+        patchAssistantMessage(assistantId, (m) => ({ ...m, isStreaming: false }));
+      } catch (err) {
+        const isAbort = err instanceof DOMException && err.name === "AbortError";
+        if (isAbort) {
+          commitMessages((prev) => prev.filter((m) => m.id !== assistantId));
+        } else {
+          patchAssistantMessage(assistantId, (m) => ({
+            ...m,
+            isStreaming: false,
+            failure: err instanceof Error ? err.message : "Something went wrong.",
+          }));
+        }
+      } finally {
+        setIsStreaming(false);
+        abortControllerRef.current = null;
+      }
+    },
+    [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id]
+  );
+
+  const send = chatEnabled ? sendMessage : sendSearch;
+
   const stopGeneration = useCallback(() => {
     abortControllerRef.current?.abort();
   }, []);
@@ -364,7 +445,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       <div className="flex h-dvh flex-col bg-page text-primary">
         <EmptyState
           isStreaming={isStreaming}
-          onSend={sendMessage}
+          onSend={send}
           onStop={stopGeneration}
           files={files}
           uploading={uploading}
@@ -391,7 +472,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       </div>
       <ChatInput
         isStreaming={isStreaming}
-        onSend={sendMessage}
+        onSend={send}
         onStop={stopGeneration}
         files={files}
         uploading={uploading}

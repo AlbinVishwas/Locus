@@ -5,9 +5,19 @@ pushed yet.
 
 ## What it is
 
-Locus is the chat app, renamed, with one thing added: you can attach PDF
-tender documents to a conversation and ask whether they mention
-something. The answer to "does it mention X" comes from a real text
+**Right now Locus is a document search tool.** You upload PDF tender
+documents to a session and type a word or phrase; Locus shows every page
+in that session's files that contains it, with a highlighted snippet.
+There are no AI replies: the language model isn't involved at all, and
+LM Studio doesn't even need to be running.
+
+The chat feature (model replies, with the same search card above each
+reply) is still all there, switched off. It comes back with one
+setting — `LOCUS_CHAT_ENABLED=true` in `.env.local`, then restart; or
+`chatEnabled` in `src/config/features.ts`. See the
+[README](../README.md#chat-switch).
+
+Either way, the answer to "does it mention X" comes from a real text
 search of the files — never from the language model guessing — so a page
 number is never invented.
 
@@ -16,13 +26,17 @@ number is never invented.
 1. Run `npm run share` on the laptop. It prints a public URL.
 2. Send that URL, plus the passcode (set in `.env.local` as
    `LOCUS_PASSCODE`), to whoever needs it.
-3. They open the URL, enter the passcode, and use it like any chat app.
-4. To ask about documents: attach PDFs with the paperclip button or by
-   dragging them onto the message box. Once a file shows "Ready", ask
-   about it in plain language — "does it mention earnest money?" — or
-   put the exact phrase in quotes for a more precise search. A results
-   card shows every matching page, with a highlighted snippet, above the
-   model's own reply.
+3. They open the URL and enter the passcode.
+4. Upload PDFs with "Upload documents", the paperclip button, or by
+   dragging them onto the search box. Once a file shows its page count,
+   type a word or phrase — `earnest money` — and press Enter. Every
+   message is a search: the whole message is matched as exact text, or,
+   if it contains something in quotes, just the quoted part. The results
+   card is the answer; if nothing matches it says "No matches in your
+   files", and offers matches that differ only in punctuation when
+   there are any.
+5. "New session" starts a fresh set of files. Each session's files are
+   its own; deleting a session deletes its files.
 
 Full details: [docs/sharing.md](sharing.md).
 
@@ -34,24 +48,27 @@ Full details: [docs/sharing.md](sharing.md).
 - **It stays fast**: under 50ms per search even at 100,000 pages
   (synthetic benchmark — see
   [docs/tender-search-report.md](tender-search-report.md)).
-- **Search works with the model switched off.** It's a separate,
-  deterministic step, not something the model is asked to do.
+- **Search-only mode never touches the model.** Proven, not inferred:
+  the tests and the end-to-end run point the app at a stand-in "LM
+  Studio" that only counts requests, and it counts zero; the browser
+  run also records every request and none goes to `/api/chat` or
+  `/api/title`. Search works with LM Studio stopped, and so does
+  `npm run share`.
+- **Both modes tested end to end** in a real (headless) Chrome, with two
+  real tender PDFs: search only (wording, hidden model pieces, the no-files prompt, plain,
+  quoted, zero-match and punctuation-hint searches, deleting a session
+  deletes its files) and chat on (unchanged behaviour).
 - **The login wall covers every page and every route** — tested with no
   session, a wrong passcode, and too many login attempts in a row.
-- **Uploads are isolated per conversation.** One conversation's files are
+- **Uploads are isolated per session.** One session's files are
   never visible to another's search, verified directly, including
   through the real browser UI.
-- **A real end-to-end run**, in an actual (headless) Chrome browser:
-  logged in, uploaded two real tender PDFs, searched a phrase from each
-  and found the right pages (including one that only shows up after
-  clicking "show more"), confirmed a brand-new conversation finds
-  nothing, confirmed an ordinary chat message still works.
 - **A real data leak was found and fixed** during this work, not shipped
   by accident: a Next.js build quirk was about to bundle the client
   tender PDFs into a deployable package. There's now an automated check
   (`npm run verify:no-data-leak`) that fails loudly if this ever happens
   again.
-- **315 automated tests pass**, along with type-checking, linting, and a
+- **385 automated tests pass**, along with type-checking, linting, and a
   production build.
 
 ## Storage and retention (the numbers, and why)
@@ -59,7 +76,7 @@ Full details: [docs/sharing.md](sharing.md).
 | Setting | Default | Reasoning |
 | --- | --- | --- |
 | Max file size | 100 MB | Real scanned tenders have reached 32 MB; this matches the most a Cloudflare tunnel will carry in one request. |
-| Max files per conversation | 20 | Comfortably above the 13-document sample set this was built against. |
+| Max files per session | 20 | Comfortably above the 13-document sample set this was built against. |
 | Total storage cap | 5 GB | A laptop-friendly number; the full 13-document sample set is under 40 MB. |
 | File retention | off (files don't expire) | Deleting something out from under someone on a timer is more surprising than useful by default. Set `LOCUS_RETENTION_DAYS` to bring automatic expiry back. |
 | Session length | 7 days | How long someone stays logged in after entering the passcode. |
@@ -68,15 +85,15 @@ All five are environment variables and can be changed without touching
 code — see the README.
 
 Since nothing expires on its own, freeing space is a manual, one-click
-action instead: every uploaded file in a conversation has its own remove
-button (with a confirmation), and deleting a conversation removes all of
+action instead: every uploaded file in a session has its own remove
+button (with a confirmation), and deleting a session removes all of
 its files too. An upload that would go over the 5 GB cap is refused with
 a message saying how much is used and that removing files or old
-conversations frees space.
+sessions frees space.
 
 If `LOCUS_RETENTION_DAYS` is set, an expired file is actually deleted
 (file, search rows, and OCR cache if nothing else needs it) — not just
-hidden — and a conversation that relied on it says so the next time it's
+hidden — and a session that relied on it says so the next time it's
 searched, rather than silently finding nothing.
 
 ## Hindi text in the documents
@@ -141,3 +158,5 @@ applies once, at upload/index time.
   [docs/sharing.md](sharing.md) for when you're ready.
 - **The model answering questions from the documents directly.** See
   decision 5 above.
+- **AI replies, for now.** Switched off on request; the code is intact
+  and comes back with `LOCUS_CHAT_ENABLED=true`.

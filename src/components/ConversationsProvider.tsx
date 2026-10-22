@@ -18,6 +18,7 @@ import { loadConversations, saveConversations } from "@/lib/storage";
 import { generateSmartTitle } from "@/lib/titleClient";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import { deleteConversationFiles } from "@/lib/uploadsClient";
+import { useFeatures } from "./FeaturesProvider";
 
 const PERSIST_DEBOUNCE_MS = 500;
 
@@ -152,6 +153,7 @@ const ConversationsContext = createContext<ConversationsContextValue | null>(nul
 
 export function ConversationsProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const { chatEnabled } = useFeatures();
 
   // Fire-and-forget: asks the model for a short topic phrase for a
   // conversation's first message, then upgrades its title once that
@@ -167,12 +169,15 @@ export function ConversationsProvider({ children }: { children: React.ReactNode 
   // would otherwise request the same upgrade many times over.
   const requestedTitleUpgradeIds = useRef(new Set<string>());
   const requestTitleUpgrade = useCallback((id: string, firstMessage: string) => {
+    // A model call, so it goes with chat (src/config/features.ts): with
+    // chat off the first-message title (deriveTitle) is the title.
+    if (!chatEnabled) return;
     if (requestedTitleUpgradeIds.current.has(id)) return;
     requestedTitleUpgradeIds.current.add(id);
     generateSmartTitle(firstMessage).then((title) => {
       if (title) dispatch({ type: "upgradeTitle", id, title });
     });
-  }, []);
+  }, [chatEnabled]);
 
   // Read localStorage only after mount, never during render. The first
   // render (server + first client hydration pass) always shows the empty

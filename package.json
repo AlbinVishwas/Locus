@@ -14,7 +14,8 @@
     "bench": "tsx scripts/bench-search.ts",
     "share": "tsx scripts/share.ts",
     "verify:no-data-leak": "tsx scripts/verify-no-data-in-build.ts",
-    "e2e": "node scripts/e2e-smoke.mjs"
+    "e2e": "node scripts/e2e-search-only.mjs",
+    "e2e:chat": "node scripts/e2e-smoke.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

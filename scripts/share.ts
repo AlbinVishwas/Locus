@@ -1,6 +1,8 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { loadEnvConfig } from "@next/env";
+import { isChatEnabled } from "../src/config/features";
 
 /**
  * `npm run share`: everything needed to hand someone a working, public
@@ -226,22 +228,35 @@ function startTunnel(port: number): Promise<{ process: ChildProcess; url: string
 }
 
 async function main() {
+  // The same .env files `next start` reads, loaded here too, so a
+  // LOCUS_CHAT_ENABLED in .env.local means the same thing to this script
+  // as it does to the server it starts.
+  loadEnvConfig(process.cwd(), false, { info: () => {}, error: console.error });
+  const chatEnabled = isChatEnabled();
+
   if (!commandExists("cloudflared")) {
     fail("cloudflared is not installed. Install it with: brew install cloudflared");
   }
 
-  log("Checking LM Studio…");
-  const { ids } = await checkLmStudio();
-  const configuredModel = process.env.LM_STUDIO_MODEL;
-  if (configuredModel && !ids.includes(configuredModel)) {
-    log(
-      `Warning: LM_STUDIO_MODEL=${configuredModel} is not among the loaded models (${ids.join(", ")}). ` +
-        `Chat will fail until the right one is loaded, but continuing -- OCR, search, and uploads don't need it.`
-    );
+  if (chatEnabled) {
+    log("Checking LM Studio…");
+    const { ids } = await checkLmStudio();
+    const configuredModel = process.env.LM_STUDIO_MODEL;
+    if (configuredModel && !ids.includes(configuredModel)) {
+      log(
+        `Warning: LM_STUDIO_MODEL=${configuredModel} is not among the loaded models (${ids.join(", ")}). ` +
+          `Chat will fail until the right one is loaded, but continuing -- OCR, search, and uploads don't need it.`
+      );
+    } else {
+      log(`LM Studio is up, model loaded: ${configuredModel ?? ids[0]}`);
+    }
+    warnAboutDuplicateModelInstances(configuredModel ?? ids[0]);
   } else {
-    log(`LM Studio is up, model loaded: ${configuredModel ?? ids[0]}`);
+    // Nothing in search-only mode talks to LM Studio, so whether it's
+    // running doesn't matter.
+    log("Chat is disabled -- Locus runs as a document search tool. Skipping the LM Studio check.");
+    log("(Set LOCUS_CHAT_ENABLED=true to turn model replies back on.)");
   }
-  warnAboutDuplicateModelInstances(configuredModel ?? ids[0]);
 
   const sessionSecret = ensureSessionSecret();
 
@@ -256,7 +271,8 @@ async function main() {
     NODE_ENV: "production",
     PORT: String(PORT),
     LOCUS_ENABLE_UPLOADS: "true",
-    LOCAL_CHAT_ENABLE_URL_CONTEXT: "true",
+    // URL reading only ever feeds the model, so it's on only with chat.
+    LOCAL_CHAT_ENABLE_URL_CONTEXT: chatEnabled ? "true" : "false",
     SESSION_SECRET: sessionSecret,
     // This machine is the one being shared, so LM Studio is always local
     // to it -- never through a second tunnel, whatever .env.local has.

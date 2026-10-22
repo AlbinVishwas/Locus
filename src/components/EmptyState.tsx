@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ConversationFile } from "@/lib/uploadsClient";
 import type { InProgressUpload } from "./AttachmentList";
 import ChatInput from "./ChatInput";
+import { useFeatures } from "./FeaturesProvider";
 import ModelPill from "./ModelPill";
 
 interface EmptyStateProps {
@@ -32,6 +33,7 @@ export default function EmptyState({
   onAttachFiles,
   onRemoveFile,
 }: EmptyStateProps) {
+  const { chatEnabled } = useFeatures();
   // Read once on mount, not on every render -- a conversation left open
   // across midnight doesn't need to relabel itself live. This component
   // only ever renders once hydrated (AppShell, its one caller chain, is
@@ -43,15 +45,15 @@ export default function EmptyState({
       {/* Same left reservation as ConversationHeader: AppShell's floating
           reopen button sits at a fixed (12px, 12px) when the sidebar is
           closed. */}
-      <div className="flex justify-end py-3 pr-4 pl-14 sm:pr-6">
-        <ModelPill />
+      <div className="flex min-h-[54px] justify-end py-3 pr-4 pl-14 sm:pr-6">
+        {chatEnabled && <ModelPill />}
       </div>
       <div className="flex flex-1 flex-col items-center justify-center px-4 pb-16">
         <h1
           className="mb-8 font-display text-[clamp(32px,8vw,52px)] font-semibold text-warm"
           style={{ letterSpacing: "-0.03em" }}
         >
-          {label}
+          {chatEnabled ? label : "Search your documents"}
         </h1>
         <ChatInput
           variant="centered"
@@ -64,7 +66,8 @@ export default function EmptyState({
           onRemoveFile={onRemoveFile}
         />
         <p className="mt-6 text-center text-[13px] text-secondary">
-          Runs on this laptop. Uploaded files stay private to their conversation.
+          Runs on this laptop. Uploaded files stay private to their{" "}
+          {chatEnabled ? "conversation" : "session"}.
         </p>
       </div>
     </div>

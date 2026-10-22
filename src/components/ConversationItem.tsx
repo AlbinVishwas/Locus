@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useConversations } from "./ConversationsProvider";
+import { useFeatures } from "./FeaturesProvider";
 import type { Conversation } from "@/lib/types";
 
 interface ConversationItemProps {
@@ -16,6 +17,7 @@ export default function ConversationItem({
   onSelect,
 }: ConversationItemProps) {
   const { renameConversation, deleteConversation } = useConversations();
+  const { chatEnabled } = useFeatures();
   const [isEditing, setIsEditing] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [draftTitle, setDraftTitle] = useState(conversation.title);
@@ -55,7 +57,7 @@ export default function ConversationItem({
           if (e.key === "Escape") setIsConfirmingDelete(false);
         }}
       >
-        <span className="flex-1 truncate text-secondary">Delete this chat?</span>
+        <span className="flex-1 truncate text-secondary">{chatEnabled ? "Delete this chat?" : "Delete this session and its files?"}</span>
         <button
           type="button"
           onClick={() => deleteConversation(conversation.id)}
@@ -114,7 +116,7 @@ export default function ConversationItem({
             e.stopPropagation();
             setIsConfirmingDelete(true);
           }}
-          aria-label="Delete conversation"
+          aria-label={chatEnabled ? "Delete conversation" : "Delete session"}
           className="shrink-0 cursor-pointer rounded p-1 text-secondary opacity-0 hover:bg-surface-hover group-hover:opacity-100 focus-visible:opacity-100"
         >
           <TrashIcon />

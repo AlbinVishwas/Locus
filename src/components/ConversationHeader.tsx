@@ -1,3 +1,6 @@
+"use client";
+
+import { useFeatures } from "./FeaturesProvider";
 import ModelPill from "./ModelPill";
 
 interface ConversationHeaderProps {
@@ -7,6 +10,7 @@ interface ConversationHeaderProps {
 
 /** Pinned above the message list once a conversation has at least one message: its title, how many files it has, and which model is answering. Pure display -- title comes from ConversationsProvider's own auto-titling, unchanged here. */
 export default function ConversationHeader({ title, fileCount }: ConversationHeaderProps) {
+  const { chatEnabled } = useFeatures();
   return (
     // Left padding is wider than the right: when the sidebar is closed,
     // AppShell floats a reopen button at a fixed (12px, 12px) regardless
@@ -17,7 +21,7 @@ export default function ConversationHeader({ title, fileCount }: ConversationHea
         className="min-w-0 truncate font-display text-[20px] font-semibold text-primary"
         style={{ letterSpacing: "-0.02em" }}
       >
-        {title || "New chat"}
+        {title || (chatEnabled ? "New chat" : "New session")}
       </h1>
       <div className="flex shrink-0 items-center gap-2">
         {fileCount > 0 && (
@@ -28,7 +32,7 @@ export default function ConversationHeader({ title, fileCount }: ConversationHea
         {/* The model pill is the least essential thing here -- dropped
             first on a narrow phone width so the title (and the file
             count, which matters more mid-conversation) keep their room. */}
-        <ModelPill className="hidden sm:inline-flex" />
+        {chatEnabled && <ModelPill className="hidden sm:inline-flex" />}
       </div>
     </div>
   );

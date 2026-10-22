@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { startLmStudioTripwire } from "@/test/lmStudioTripwire";
 import { POST } from "./route";
 
 /**
@@ -11,10 +12,12 @@ import { POST } from "./route";
 
 beforeEach(() => {
   process.env.LM_STUDIO_BASE_URL = "http://127.0.0.1:1/v1";
+  process.env.LOCUS_CHAT_ENABLED = "true";
 });
 
 afterEach(() => {
   delete process.env.LM_STUDIO_BASE_URL;
+  delete process.env.LOCUS_CHAT_ENABLED;
 });
 
 function post(body: unknown) {
@@ -26,6 +29,21 @@ function post(body: unknown) {
     })
   );
 }
+
+describe("POST /api/title with chat turned off", () => {
+  it("refuses without calling the model", async () => {
+    delete process.env.LOCUS_CHAT_ENABLED;
+    const tripwire = await startLmStudioTripwire();
+    process.env.LM_STUDIO_BASE_URL = tripwire.baseURL;
+    try {
+      const res = await post({ message: "does this mention earnest money?" });
+      expect(res.status).toBe(403);
+      expect(tripwire.hits).toEqual([]);
+    } finally {
+      await tripwire.close();
+    }
+  });
+});
 
 describe("POST /api/title", () => {
   it("degrades to an empty title, not an error, when LM Studio is unreachable", async () => {

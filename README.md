@@ -1,12 +1,46 @@
 # Locus
 
-A local chat interface for [LM Studio](https://lmstudio.ai/), with deterministic
-full-text search over PDF documents alongside it. Built on Next.js.
+Deterministic full-text search over your own PDF documents, running locally,
+with an optional chat interface for [LM Studio](https://lmstudio.ai/) that is
+**off by default** (see [Chat switch](#chat-switch)). Built on Next.js.
+
+## Chat switch
+
+Locus runs as a document search tool unless chat is turned on. One setting
+controls it, in [`src/config/features.ts`](src/config/features.ts):
+
+```ts
+export const features = {
+  chatEnabled: false,
+};
+```
+
+Override it without editing code with an environment variable (in
+`.env.local`, or on the command line), then restart -- no rebuild needed,
+it's read when each page is served:
+
+```bash
+LOCUS_CHAT_ENABLED=true    # chat on: model replies, exactly as before
+LOCUS_CHAT_ENABLED=false   # chat off (also what unset means)
+```
+
+| | Chat off (default) | Chat on |
+| --- | --- | --- |
+| A message | Searched over that session's files: quoted text if there is any, otherwise the whole message as exact text. The results card is the answer, including "No matches in your files" (with the punctuation hint when loose mode finds something). A session with no files gets a prompt to upload some. | Sent to LM Studio; the same search card appears above the reply when the conversation has files. |
+| `/api/chat`, `/api/title` | Refuse with 403 "Chat is disabled…", before reading the request. Nothing reaches LM Studio or the URL fetcher. | Model reply / model-generated title. |
+| Stages shown | Upload stages (Uploading, Reading, Scanning page N of M) and Searching | Also Thinking, URL reading |
+| Model pill, "Read a link" chip, URL reading | Hidden / off | Shown / on |
+| Wording | "New session", "Sessions", "Search your documents" | "New chat", "Recent", time-of-day greeting |
+| `npm run share` | Skips the LM Studio check; LM Studio can be off | Checks LM Studio first |
+
+Either way, each session/conversation keeps its own files, and deleting it
+deletes them. No chat code is removed while chat is off; everything
+chat-related checks this one setting.
 
 ## Local Setup
 
-Configure `LM_STUDIO_BASE_URL` and `LM_STUDIO_MODEL` in `.env.local`, then run
-`npm run dev`.
+Run `npm run dev`. With chat turned on, also configure `LM_STUDIO_BASE_URL`
+and `LM_STUDIO_MODEL` in `.env.local`.
 
 The optional URL-context feature retrieves links from user messages only during
 development. A production deployment must explicitly set
@@ -68,7 +102,8 @@ Other commands:
 | `npm run bench` | Builds a 100,000-page synthetic index and reports size and p50/p95 latency |
 | `npm run share` | Builds, starts production mode with uploads enabled, and shares it over a public Cloudflare tunnel. See [docs/sharing.md](docs/sharing.md). |
 | `npm run verify:no-data-leak` | After `npm run build`: confirms no file-tracing manifest references `data/` (client PDFs, the index, uploads never belong in a deployable bundle) |
-| `npm run e2e` | End to end through a real (headless) browser: login, upload, search, a files-less conversation, a normal chat message. Needs a server already running with `LOCUS_ENABLE_UPLOADS=true` and a known passcode: `E2E_BASE_URL=http://localhost:3000 E2E_PASSCODE=... npm run e2e` |
+| `npm run e2e` | End to end through a real (headless) browser with **chat off**: search-tool wording and hidden model pieces, the no-files prompt, upload, plain/quoted/zero-match/punctuation-hint searches, deleting a session deletes its files -- and proof that nothing reached `/api/chat`, `/api/title` or LM Studio (a stand-in LM Studio on port 1239 counts requests). Needs a chat-off server already running with `LOCUS_ENABLE_UPLOADS=true`, a known passcode and `LM_STUDIO_BASE_URL=http://127.0.0.1:1239/v1`; usage at the top of `scripts/e2e-search-only.mjs`. |
+| `npm run e2e:chat` | The same kind of run with **chat on**: upload, search, a files-less conversation, a normal chat message. Needs a server started with `LOCUS_CHAT_ENABLED=true`: `E2E_BASE_URL=http://localhost:3000 E2E_PASSCODE=... npm run e2e:chat` |
 
 Indexer settings (environment variables, all optional):
 
@@ -84,8 +119,8 @@ Indexer settings (environment variables, all optional):
 
 ## Uploads
 
-Attach PDFs to a conversation and ask about them in chat (see
-[docs/locus-summary.md](docs/locus-summary.md)). Off by default outside
+Attach PDFs to a session and search inside them (or, with chat on, ask
+about them in chat -- see [docs/locus-summary.md](docs/locus-summary.md)). Off by default outside
 development -- set `LOCUS_ENABLE_UPLOADS=true` only for a trusted local
 deployment.
 

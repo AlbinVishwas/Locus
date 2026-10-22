@@ -12,16 +12,23 @@ npm run share
 
 What it does, in order:
 
-1. Checks LM Studio is reachable at `http://localhost:1234/v1` and has a
-   model loaded. If not, it tells you why and stops — nothing else starts.
+1. **Chat off (the default):** prints that chat is disabled and skips
+   the LM Studio check entirely — LM Studio can be closed; nothing in
+   search-only mode talks to it. **Chat on** (`LOCUS_CHAT_ENABLED=true`,
+   see the [README](../README.md#chat-switch)): checks LM Studio is
+   reachable at `http://localhost:1234/v1` and has a model loaded. If
+   not, it tells you why and stops — nothing else starts. It reads
+   `.env.local` the same way the server does, so the setting there
+   applies to both.
 2. Makes sure `SESSION_SECRET` is set, generating one and saving it to
    `.env.local` the first time (so sessions survive a restart; see
    "One-time setup" below if you'd rather set it yourself).
 3. Runs `npm run build`.
 4. Starts the app in production mode on port 3000, with uploads and
-   search turned on (`LOCUS_ENABLE_UPLOADS=true`) and URL context turned on
-   (`LOCAL_CHAT_ENABLE_URL_CONTEXT=true`) — both are off by default in
-   production, and this is the one place they're meant to be on.
+   search turned on (`LOCUS_ENABLE_UPLOADS=true`), and — only with chat
+   on — URL context turned on (`LOCAL_CHAT_ENABLE_URL_CONTEXT=true`).
+   Both are off by default in production, and this is the one place
+   they're meant to be on.
 5. Runs `caffeinate -i` for as long as the server runs, so the laptop
    doesn't go to sleep mid-conversation.
 6. Starts a Cloudflare quick tunnel to port 3000, gets back a one-off
@@ -58,8 +65,9 @@ npm run share -- --no-vercel
   if you used `--no-vercel`).
 - The passcode from `LOCUS_PASSCODE` in your `.env.local`.
 
-They open the link, enter the passcode, and use it like any other web
-app: chat, attach PDFs, ask about them. Everything runs on your laptop;
+They open the link, enter the passcode, upload PDFs to a session, and
+type a word or phrase to find every page that contains it (with chat
+on: chat, attach PDFs, ask about them). Everything runs on your laptop;
 nothing is uploaded anywhere except to this machine.
 
 ## One-time setup
@@ -101,8 +109,11 @@ itself needs to change.
 
 ## Troubleshooting
 
-- **"Could not reach LM Studio"** — open LM Studio, load a model, and make
-  sure its local server is started (the button that says "Start Server").
+- **"Could not reach LM Studio"** — only possible with chat on. Open LM
+  Studio, load a model, and make sure its local server is started (the
+  button that says "Start Server"), or turn chat off.
+- **Chat replies are missing** — chat is off by default; see the
+  [README](../README.md#chat-switch) to turn it on.
 - **"cloudflared is not installed"** — `brew install cloudflared`.
 - **The tunnel closes on its own** — `npm run share` notices and stops the
   server too, rather than leaving it running with no way to reach it.

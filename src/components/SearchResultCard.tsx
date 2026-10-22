@@ -8,6 +8,12 @@ interface SearchResultCardProps {
   result: SearchResult;
   /** The punctuation-insensitive fallback, when exact mode found nothing but loose mode found something. */
   looseAlternative?: SearchResult | null;
+  /**
+   * Chat turned off: the card is the turn's whole answer, so "nothing
+   * found" gets a full card with a clear heading instead of the quiet line
+   * that sits above a model reply.
+   */
+  searchOnly?: boolean;
 }
 
 const INITIAL_HITS_PER_DOC = 3;
@@ -23,7 +29,11 @@ const PRIVATE_USE = new RegExp(`[${String.fromCharCode(0xe000)}-${String.fromCha
  * first), and kept on DisplayMessage so it survives a reload; never sent
  * back to the model (toHistoryPayload only ever reads {role, content}).
  */
-export default function SearchResultCard({ result, looseAlternative }: SearchResultCardProps) {
+export default function SearchResultCard({
+  result,
+  looseAlternative,
+  searchOnly = false,
+}: SearchResultCardProps) {
   // Showing the loose fallback is a display choice the user makes by
   // clicking, not something the server decides for them.
   const [showLoose, setShowLoose] = useState(false);
@@ -34,9 +44,17 @@ export default function SearchResultCard({ result, looseAlternative }: SearchRes
 
   if (nothingFound) {
     return (
-      <div className="mb-3 text-[13px] text-secondary">
+      <div
+        className={
+          searchOnly
+            ? "mb-3 rounded-xl border border-line bg-surface p-3.5 text-[13px] text-secondary"
+            : "mb-3 text-[13px] text-secondary"
+        }
+      >
+        {searchOnly && <p className="mb-1 font-medium text-primary">No matches in your files</p>}
         <p>
-          No page in this conversation&apos;s files contains &ldquo;{shown.query}&rdquo;.
+          No page in this {searchOnly ? "session" : "conversation"}&apos;s files contains &ldquo;
+          {shown.query}&rdquo;.
         </p>
         {!showLoose && looseAlternative && (
           <button
