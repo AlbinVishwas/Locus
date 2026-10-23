@@ -7,12 +7,14 @@ interface MessageListProps {
   fetchingUrls: string[] | null;
   /** This conversation's current file count, for the brief "Searching N files" stage. */
   fileCount: number;
+  conversationId: string;
 }
 
 export default function MessageList({
   messages,
   fetchingUrls,
   fileCount,
+  conversationId,
 }: MessageListProps) {
   return (
     <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-4 py-8 sm:px-6">
@@ -23,6 +25,7 @@ export default function MessageList({
           // Only the streaming message can be in a read phase.
           fetchingUrls={message.isStreaming ? fetchingUrls : null}
           fileCount={fileCount}
+          conversationId={conversationId}
         />
       ))}
     </div>

@@ -79,6 +79,32 @@ export function runDocumentSearch(
 }
 
 /**
+ * The next window of hits for a search a card is already showing -- its
+ * "show more" button. Takes the query as the first result reported it
+ * (already extracted from the message) and that result's mode, so the
+ * pages continue exactly where the first window stopped. Null under the
+ * same conditions as runDocumentSearch.
+ */
+export function runDocumentSearchPage(
+  conversationId: string,
+  query: string,
+  mode: SearchResult["mode"],
+  offset: number
+): SearchResult | null {
+  let db;
+  try {
+    db = getIndexDb();
+  } catch (err) {
+    if (err instanceof IndexUnavailableError) return null;
+    throw err;
+  }
+  if (!hasDocumentsForConversation(db, conversationId)) return null;
+  if (query.trim() === "") return null;
+
+  return search(db, query.trim(), { mode, offset, limit: SEARCH_LIMIT, scope: conversationId });
+}
+
+/**
  * The note appended to the model's prompt (never stored, never shown):
  * the results card is the user's real answer for "does a document mention
  * X"; the model's own words about documents it cannot read would be a

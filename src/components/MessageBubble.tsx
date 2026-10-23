@@ -13,12 +13,15 @@ interface MessageBubbleProps {
   fetchingUrls?: string[] | null;
   /** This conversation's current file count, for the brief "Searching N files" stage. */
   fileCount?: number;
+  /** Lets the search card load hits past its first window. */
+  conversationId?: string;
 }
 
 export default function MessageBubble({
   message,
   fetchingUrls,
   fileCount = 0,
+  conversationId,
 }: MessageBubbleProps) {
   const { chatEnabled } = useFeatures();
 
@@ -33,7 +36,9 @@ export default function MessageBubble({
     );
   }
 
-  if (!chatEnabled) return <SearchOnlyReply message={message} fileCount={fileCount} />;
+  if (!chatEnabled) {
+    return <SearchOnlyReply message={message} fileCount={fileCount} conversationId={conversationId} />;
+  }
 
   // No bubble for the assistant, on purpose — plain full-width text is
   // what makes this read as a chat transcript instead of a message app.
@@ -48,7 +53,11 @@ export default function MessageBubble({
           result sits above the reply — the user's own files answering the
           question, not the model describing them. */}
       {message.searchResult && (
-        <SearchResultCard result={message.searchResult} looseAlternative={message.looseAlternative} />
+        <SearchResultCard
+          result={message.searchResult}
+          looseAlternative={message.looseAlternative}
+          conversationId={conversationId}
+        />
       )}
       {message.filesExpired && (
         <p className="mb-3 text-[13px] text-secondary">
@@ -84,7 +93,15 @@ export default function MessageBubble({
  * since no model runs. Content and failure still render, so a transcript
  * from when chat was on reads the same as it did.
  */
-function SearchOnlyReply({ message, fileCount }: { message: DisplayMessage; fileCount: number }) {
+function SearchOnlyReply({
+  message,
+  fileCount,
+  conversationId,
+}: {
+  message: DisplayMessage;
+  fileCount: number;
+  conversationId?: string;
+}) {
   const isSearching = message.isStreaming && message.searchResult == null;
 
   return (
@@ -107,6 +124,7 @@ function SearchOnlyReply({ message, fileCount }: { message: DisplayMessage; file
           result={message.searchResult}
           looseAlternative={message.looseAlternative}
           searchOnly
+          conversationId={conversationId}
         />
       )}
       {message.noFiles && (

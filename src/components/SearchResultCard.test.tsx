@@ -109,4 +109,57 @@ describe("SearchResultCard", () => {
     expect(html).toContain("earnest-money-notice.pdf");
     expect(html).toContain("matches by filename only");
   });
+  it("lists documents whose matches aren't loaded yet, and offers the next window", () => {
+    const hit = (pageNo: number) => ({
+      docId: 1,
+      filename: "big.pdf",
+      pageNo,
+      pageLabel: null,
+      source: "text" as const,
+      matchedIn: ["layer" as const],
+      ocrOnly: false,
+      snippet: [{ text: "cat", hit: true }],
+    });
+    const result = baseResult({
+      totalPages: 75,
+      totalDocuments: 2,
+      documents: [
+        { docId: 1, filename: "big.pdf", hitCount: 60, filenameMatch: false },
+        { docId: 2, filename: "small.pdf", hitCount: 15, filenameMatch: false },
+      ],
+      hits: Array.from({ length: 50 }, (_, i) => hit(i + 1)),
+      hasMore: true,
+    });
+    const html = renderToStaticMarkup(<SearchResultCard result={result} conversationId="c1" searchOnly />);
+    // All 50 loaded hits render, not a per-document preview.
+    expect(html).toContain("Page 50");
+    expect(html).toContain("50 of 60 pages");
+    expect(html).toContain("small.pdf");
+    expect(html).toContain("15 pages · not loaded yet");
+    expect(html).toContain("Show the remaining 25 pages");
+  });
+
+  it("says how much is shown when it can't load more (no session id)", () => {
+    const result = baseResult({
+      totalPages: 75,
+      totalDocuments: 1,
+      documents: [{ docId: 1, filename: "big.pdf", hitCount: 75, filenameMatch: false }],
+      hits: [
+        {
+          docId: 1,
+          filename: "big.pdf",
+          pageNo: 1,
+          pageLabel: null,
+          source: "text",
+          matchedIn: ["layer"],
+          ocrOnly: false,
+          snippet: [{ text: "cat", hit: true }],
+        },
+      ],
+      hasMore: true,
+    });
+    const html = renderToStaticMarkup(<SearchResultCard result={result} />);
+    expect(html).toContain("Showing 1 of 75 pages");
+    expect(html).not.toContain("Show the remaining");
+  });
 });

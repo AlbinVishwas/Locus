@@ -22,3 +22,21 @@ export async function searchSession(
   }
   return (await res.json()) as SessionSearchResponse;
 }
+
+/** The next window of hits for a result already on screen: `query` and `mode` exactly as that result reported them. */
+export async function searchSessionPage(
+  conversationId: string,
+  query: string,
+  mode: SearchResult["mode"],
+  offset: number
+): Promise<SessionSearchResponse> {
+  const res = await fetch("/api/session-search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conversationId, message: query, mode, offset }),
+  });
+  if (!res.ok) {
+    throw new Error(`Search failed (${res.status}): ${await res.text().catch(() => res.statusText)}`);
+  }
+  return (await res.json()) as SessionSearchResponse;
+}

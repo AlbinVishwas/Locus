@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { PageHit, SearchResult } from "@/lib/search/query";
 import type { SnippetPart } from "@/lib/search/snippet";
+import { searchSessionPage } from "@/lib/sessionSearchClient";
 
 interface SearchResultCardProps {
   result: SearchResult;
@@ -14,9 +15,13 @@ interface SearchResultCardProps {
    * that sits above a model reply.
    */
   searchOnly?: boolean;
+  /**
+   * The session the search ran in. Enables "show more": the server sends
+   * hits in windows of `result.limit`, and without this the card can only
+   * show the first window.
+   */
+  conversationId?: string;
 }
-
-const INITIAL_HITS_PER_DOC = 3;
 
 // Unicode private-use area: symbol-font bullets (Wingdings etc.) extract to
 // these code points, which no system font can draw. Display-only.
@@ -33,11 +38,49 @@ export default function SearchResultCard({
   result,
   looseAlternative,
   searchOnly = false,
+  conversationId,
 }: SearchResultCardProps) {
   // Showing the loose fallback is a display choice the user makes by
   // clicking, not something the server decides for them.
   const [showLoose, setShowLoose] = useState(false);
   const shown = showLoose && looseAlternative ? looseAlternative : result;
+
+  // Hits fetched past the first window. Kept in memory only (not on the
+  // stored message), so a reload shows the first window again.
+  const [moreHits, setMoreHits] = useState<PageHit[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const allHits = [...shown.hits, ...moreHits];
+  const remaining = shown.totalPages - shown.offset - allHits.length;
+
+  const switchMode = (loose: boolean) => {
+    setShowLoose(loose);
+    setMoreHits([]);
+    setMoreError(null);
+  };
+
+  const loadMore = async () => {
+    if (!conversationId || loadingMore) return;
+    setLoadingMore(true);
+    setMoreError(null);
+    try {
+      const page = await searchSessionPage(
+        conversationId,
+        shown.query,
+        shown.mode,
+        shown.offset + allHits.length
+      );
+      if (page.status === "ok") {
+        setMoreHits((prev) => [...prev, ...page.result.hits]);
+      } else {
+        setMoreError("This session's files are no longer available.");
+      }
+    } catch {
+      setMoreError("Couldn't load more results. Try again.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const filenameOnly = shown.documents.filter((d) => d.filenameMatch && d.hitCount === 0);
   const nothingFound = shown.totalPages === 0 && filenameOnly.length === 0;
@@ -59,7 +102,7 @@ export default function SearchResultCard({
         {!showLoose && looseAlternative && (
           <button
             type="button"
-            onClick={() => setShowLoose(true)}
+            onClick={() => switchMode(true)}
             className="mt-1 cursor-pointer text-primary underline decoration-line underline-offset-2 hover:decoration-primary"
           >
             {looseAlternative.totalPages} {looseAlternative.totalPages === 1 ? "page" : "pages"} match
@@ -71,7 +114,11 @@ export default function SearchResultCard({
   }
 
   const groups = new Map<number, PageHit[]>();
-  for (const hit of shown.hits) groups.set(hit.docId, [...(groups.get(hit.docId) ?? []), hit]);
+  for (const hit of allHits) groups.set(hit.docId, [...(groups.get(hit.docId) ?? []), hit]);
+  const hitCountByDoc = new Map(shown.documents.map((d) => [d.docId, d.hitCount]));
+  // Documents with matches that sit past the loaded hits: listed by name
+  // and count so the header's document total is visible, not just stated.
+  const notYetShown = shown.documents.filter((d) => d.hitCount > 0 && !groups.has(d.docId));
 
   return (
     <div className="mb-3 rounded-xl border border-line bg-surface p-3.5 text-[13px]">
@@ -97,7 +144,7 @@ export default function SearchResultCard({
       {showLoose && (
         <button
           type="button"
-          onClick={() => setShowLoose(false)}
+          onClick={() => switchMode(false)}
           className="mt-1 cursor-pointer text-secondary underline decoration-line underline-offset-2 hover:decoration-primary"
         >
           Showing matches without exact punctuation — switch back to exact
@@ -106,7 +153,22 @@ export default function SearchResultCard({
 
       <div className="mt-2.5 flex flex-col gap-2.5">
         {[...groups].map(([docId, docHits]) => (
-          <DocumentGroup key={docId} filename={docHits[0].filename} hits={docHits} />
+          <DocumentGroup
+            key={docId}
+            filename={docHits[0].filename}
+            hits={docHits}
+            totalHits={hitCountByDoc.get(docId) ?? docHits.length}
+          />
+        ))}
+        {notYetShown.map((d) => (
+          <div key={d.docId} className="flex items-baseline justify-between gap-3 rounded-lg bg-page px-3 py-2">
+            <span className="truncate font-medium text-primary" title={d.filename}>
+              {d.filename}
+            </span>
+            <span className="shrink-0 text-secondary">
+              {d.hitCount} {d.hitCount === 1 ? "page" : "pages"} · not loaded yet
+            </span>
+          </div>
         ))}
         {filenameOnly.map((d) => (
           <div key={d.docId} className="rounded-lg bg-page px-3 py-2">
@@ -117,22 +179,47 @@ export default function SearchResultCard({
           </div>
         ))}
       </div>
+
+      {remaining > 0 && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {conversationId ? (
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="cursor-pointer rounded-lg border border-line px-3 py-1.5 text-primary hover:bg-page disabled:cursor-default disabled:opacity-60"
+            >
+              {loadingMore
+                ? "Loading…"
+                : remaining <= shown.limit
+                  ? `Show the remaining ${remaining} ${remaining === 1 ? "page" : "pages"}`
+                  : `Show next ${shown.limit} · ${remaining} more pages`}
+            </button>
+          ) : (
+            <span className="text-secondary">
+              Showing {allHits.length} of {shown.totalPages} pages
+            </span>
+          )}
+          {moreError && <span className="text-secondary">{moreError}</span>}
+        </div>
+      )}
     </div>
   );
 }
 
-function DocumentGroup({ filename, hits }: { filename: string; hits: PageHit[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? hits : hits.slice(0, INITIAL_HITS_PER_DOC);
-  const hidden = hits.length - visible.length;
-
+function DocumentGroup({ filename, hits, totalHits }: { filename: string; hits: PageHit[]; totalHits: number }) {
   return (
     <div className="rounded-lg bg-page px-3 py-2.5">
-      <p className="mb-1.5 truncate font-medium text-primary" title={filename}>
-        {filename}
-      </p>
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <p className="truncate font-medium text-primary" title={filename}>
+          {filename}
+        </p>
+        <span className="shrink-0 tabular-nums text-secondary">
+          {hits.length < totalHits ? `${hits.length} of ${totalHits} pages` : `${totalHits} ${totalHits === 1 ? "page" : "pages"}`}
+        </span>
+      </div>
       <ul className="flex flex-col gap-1.5">
-        {visible.map((hit) => (
+        {hits.map((hit) => (
           <li key={hit.pageNo}>
             <div className="flex flex-wrap items-baseline gap-x-2 text-secondary">
               <span className="rounded-full bg-cream/15 px-2 py-0.5 font-medium tabular-nums text-cream">
@@ -149,15 +236,6 @@ function DocumentGroup({ filename, hits }: { filename: string; hits: PageHit[] }
           </li>
         ))}
       </ul>
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mt-1.5 cursor-pointer text-secondary underline decoration-line underline-offset-2 hover:decoration-primary"
-        >
-          Show {hidden} more {hidden === 1 ? "page" : "pages"}
-        </button>
-      )}
     </div>
   );
 }

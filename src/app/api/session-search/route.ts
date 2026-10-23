@@ -1,4 +1,4 @@
-import { runDocumentSearch } from "@/lib/chat/documentSearch";
+import { runDocumentSearch, runDocumentSearchPage } from "@/lib/chat/documentSearch";
 import { getIndexDb, IndexUnavailableError } from "@/lib/search/indexDb";
 import { hasDocumentsForConversation } from "@/lib/search/query";
 import type { SessionSearchResponse } from "@/lib/sessionSearchClient";
@@ -24,10 +24,19 @@ const MAX_MESSAGE_CHARS = 20_000;
 export async function POST(req: Request) {
   let conversationId: unknown;
   let message: unknown;
+  let offset: unknown;
+  let mode: unknown;
   try {
-    const body = (await req.json()) as { conversationId?: unknown; message?: unknown };
+    const body = (await req.json()) as {
+      conversationId?: unknown;
+      message?: unknown;
+      offset?: unknown;
+      mode?: unknown;
+    };
     conversationId = body?.conversationId;
     message = body?.message;
+    offset = body?.offset;
+    mode = body?.mode;
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
   }
@@ -45,6 +54,15 @@ export async function POST(req: Request) {
   if (message.length > MAX_MESSAGE_CHARS) {
     return new Response(`\`message\` is limited to ${MAX_MESSAGE_CHARS} characters`, { status: 400 });
   }
+  // A "show more" request: `message` is then the query the first result
+  // reported, and `mode` the mode it ran in.
+  const isPage = offset !== undefined;
+  if (isPage && (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0)) {
+    return new Response("`offset` must be a non-negative integer", { status: 400 });
+  }
+  if (isPage && mode !== "exact" && mode !== "loose") {
+    return new Response('`mode` must be "exact" or "loose"', { status: 400 });
+  }
 
   const json = (body: SessionSearchResponse) =>
     Response.json(body, { headers: { "Cache-Control": "no-store" } });
@@ -60,6 +78,12 @@ export async function POST(req: Request) {
       throw err;
     }
     if (!hasFiles) return json({ status: "no-files" });
+
+    if (isPage) {
+      const page = runDocumentSearchPage(conversationId, message, mode as "exact" | "loose", offset as number);
+      if (!page) return json({ status: "no-files" });
+      return json({ status: "ok", result: page, looseAlternative: null });
+    }
 
     const outcome = runDocumentSearch(conversationId, message);
     // hasFiles was just checked and message is non-blank, so this is only

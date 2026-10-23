@@ -489,6 +489,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           messages={messages}
           fetchingUrls={fetchingUrls}
           fileCount={files.length}
+          conversationId={conversation.id}
         />
       </div>
       <ChatInput

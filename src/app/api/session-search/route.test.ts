@@ -133,7 +133,49 @@ describe("POST /api/session-search", () => {
     expect(out.status).toBe("ok");
   });
 
+  it("pages past the first 50 hits, continuing across documents in order", async () => {
+    // 60 matching pages in one document and 5 in another: the first window
+    // is all from the first, the second picks up the rest.
+    const db = openIndex(process.env.SEARCH_INDEX_PATH!);
+    for (const [name, count] of [["a-big", 60], ["b-small", 5]] as const) {
+      insertUploadedDocument(db, {
+        conversationId: "conv-a",
+        originalFilename: `${name}.pdf`,
+        storedFilename: `${name}.pdf`,
+        sha256: name,
+        sizeBytes: 1,
+        ocrLang: "eng",
+        settings: "v1",
+        uploadedAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: null,
+        pages: Array.from({ length: count }, (_, i) => ({ ...page("an ocelot clause"), pageNo: i + 1 })),
+      });
+    }
+    db.close();
+
+    const first = await search("conv-a", "ocelot");
+    if (first.status !== "ok") throw new Error("expected ok");
+    expect(first.result.totalPages).toBe(65);
+    expect(first.result.totalDocuments).toBe(2);
+    expect(first.result.hits).toHaveLength(50);
+    expect(new Set(first.result.hits.map((h) => h.filename))).toEqual(new Set(["a-big.pdf"]));
+
+    const res = await post({ conversationId: "conv-a", message: first.result.query, mode: "exact", offset: 50 });
+    expect(res.status).toBe(200);
+    const next = (await res.json()) as SessionSearchResponse;
+    if (next.status !== "ok") throw new Error("expected ok");
+    expect(next.result.hits).toHaveLength(15);
+    expect(next.result.hits.filter((h) => h.filename === "a-big.pdf").map((h) => h.pageNo)).toEqual(
+      Array.from({ length: 10 }, (_, i) => 51 + i)
+    );
+    expect(next.result.hits.filter((h) => h.filename === "b-small.pdf")).toHaveLength(5);
+    expect(next.result.hasMore).toBe(false);
+  });
+
   it("rejects bad input with a 400", async () => {
+    expect((await post({ conversationId: "c", message: "x", offset: -1, mode: "exact" })).status).toBe(400);
+    expect((await post({ conversationId: "c", message: "x", offset: 1.5, mode: "exact" })).status).toBe(400);
+    expect((await post({ conversationId: "c", message: "x", offset: 50, mode: "fuzzy" })).status).toBe(400);
     expect((await post("not json")).status).toBe(400);
     expect((await post({ conversationId: "", message: "x" })).status).toBe(400);
     expect((await post({ conversationId: "c", message: "   " })).status).toBe(400);
