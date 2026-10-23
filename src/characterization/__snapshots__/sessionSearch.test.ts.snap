@@ -1,0 +1,191 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`characterization: /api/session-search > answers a session with files but zero matches as ok with an empty result 1`] = `
+{
+  "looseAlternative": null,
+  "result": {
+    "documents": [],
+    "hasMore": false,
+    "hits": [],
+    "limit": 50,
+    "mode": "exact",
+    "offset": 0,
+    "prepared": "zzzz-not-present",
+    "query": "zzzz-not-present",
+    "tookMs": "<ms>",
+    "totalDocuments": 0,
+    "totalPages": 0,
+    "usedFullScan": false,
+  },
+  "status": "ok",
+}
+`;
+
+exports[`characterization: /api/session-search > offers the loose alternative only when exact finds nothing and loose does 1`] = `
+{
+  "looseAlternative": {
+    "documents": [
+      {
+        "docId": 1,
+        "filename": "a.pdf",
+        "filenameMatch": false,
+        "hitCount": 1,
+      },
+    ],
+    "hasMore": false,
+    "hits": [
+      {
+        "docId": 1,
+        "filename": "a.pdf",
+        "matchedIn": [
+          "layer",
+        ],
+        "ocrOnly": false,
+        "pageLabel": null,
+        "pageNo": 1,
+        "snippet": [
+          {
+            "hit": false,
+            "text": "ref ",
+          },
+          {
+            "hit": true,
+            "text": "26/2080",
+          },
+          {
+            "hit": false,
+            "text": " dated",
+          },
+        ],
+        "source": "text",
+      },
+    ],
+    "limit": 50,
+    "mode": "loose",
+    "offset": 0,
+    "prepared": "26 2080",
+    "query": "26-2080",
+    "tookMs": "<ms>",
+    "totalDocuments": 1,
+    "totalPages": 1,
+    "usedFullScan": false,
+  },
+  "result": {
+    "documents": [],
+    "hasMore": false,
+    "hits": [],
+    "limit": 50,
+    "mode": "exact",
+    "offset": 0,
+    "prepared": "26-2080",
+    "query": "26-2080",
+    "tookMs": "<ms>",
+    "totalDocuments": 0,
+    "totalPages": 0,
+    "usedFullScan": false,
+  },
+  "status": "ok",
+}
+`;
+
+exports[`characterization: /api/session-search > returns this exact result: documents in filename order, hits by document then page 1`] = `
+{
+  "looseAlternative": null,
+  "result": {
+    "documents": [
+      {
+        "docId": 2,
+        "filename": "a-first.pdf",
+        "filenameMatch": false,
+        "hitCount": 1,
+      },
+      {
+        "docId": 1,
+        "filename": "b-second.pdf",
+        "filenameMatch": false,
+        "hitCount": 2,
+      },
+    ],
+    "hasMore": false,
+    "hits": [
+      {
+        "docId": 2,
+        "filename": "a-first.pdf",
+        "matchedIn": [
+          "layer",
+        ],
+        "ocrOnly": false,
+        "pageLabel": null,
+        "pageNo": 2,
+        "snippet": [
+          {
+            "hit": false,
+            "text": "the ",
+          },
+          {
+            "hit": true,
+            "text": "EARNEST MONEY",
+          },
+          {
+            "hit": false,
+            "text": " deposit",
+          },
+        ],
+        "source": "text",
+      },
+      {
+        "docId": 1,
+        "filename": "b-second.pdf",
+        "matchedIn": [
+          "layer",
+        ],
+        "ocrOnly": false,
+        "pageLabel": null,
+        "pageNo": 1,
+        "snippet": [
+          {
+            "hit": true,
+            "text": "Earnest Money",
+          },
+          {
+            "hit": false,
+            "text": " here",
+          },
+        ],
+        "source": "text",
+      },
+      {
+        "docId": 1,
+        "filename": "b-second.pdf",
+        "matchedIn": [
+          "layer",
+        ],
+        "ocrOnly": false,
+        "pageLabel": null,
+        "pageNo": 3,
+        "snippet": [
+          {
+            "hit": true,
+            "text": "earnest money",
+          },
+          {
+            "hit": false,
+            "text": " again",
+          },
+        ],
+        "source": "text",
+      },
+    ],
+    "limit": 50,
+    "mode": "exact",
+    "offset": 0,
+    "prepared": "earnest money",
+    "query": "earnest money",
+    "tookMs": "<ms>",
+    "totalDocuments": 2,
+    "totalPages": 3,
+    "usedFullScan": false,
+  },
+  "status": "ok",
+}
+`;

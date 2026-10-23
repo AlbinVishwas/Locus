@@ -137,6 +137,16 @@ with a message naming how much is used.
 | `MAX_UPLOAD_FILE_BYTES` | `104857600` (100 MB) | Largest single file accepted. |
 | `MAX_FILES_PER_CONVERSATION` | `20` | Per-conversation cap, independent of the storage cap. |
 
+## Characterization tests
+
+`src/characterization/` pins today's behaviour exactly -- the upload flow
+and where its files land, session search responses, the login round
+trip, the chat on/off matrix, `npm run share`'s server environment, and
+the session index schema -- as a guard while the document library
+feature is built ([docs/library-plan.md](docs/library-plan.md)). They run
+with the rest of `npm test`. A change that makes one fail is a change to
+existing behaviour, made on purpose or not.
+
 ## Learn More
 
 Built with [Next.js](https://nextjs.org). See the
