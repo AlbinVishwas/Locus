@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>APFSContainerReference</key>
+	<string>disk3</string>
+	<key>BusProtocol</key>
+	<string>Apple Fabric</string>
+	<key>DeviceIdentifier</key>
+	<string>disk3s5</string>
+	<key>Ejectable</key>
+	<false/>
+	<key>FilesystemType</key>
+	<string>apfs</string>
+	<key>Internal</key>
+	<true/>
+	<key>MountPoint</key>
+	<string>/System/Volumes/Data</string>
+	<key>ParentWholeDisk</key>
+	<string>disk3</string>
+	<key>Removable</key>
+	<false/>
+	<key>RemovableMedia</key>
+	<false/>
+	<key>VolumeName</key>
+	<string>Data</string>
+	<key>VolumeUUID</key>
+	<string>F596094F-613E-4871-96F4-8DF9AD327225</string>
+	<key>Writable</key>
+	<true/>
+</dict>
+</plist>
