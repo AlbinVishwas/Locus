@@ -199,13 +199,28 @@ function updateVercelRedirect(tunnelUrl: string): void {
 }
 
 const CLOUDFLARE_URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+const QUIC_FAILURE_PATTERN = /Failed to dial a quic connection|QUIC connection failed/;
+const REGISTERED_PATTERN = /Registered tunnel connection/;
+/**
+ * After cloudflared reports a failed QUIC (UDP) connection, how long to give
+ * it to register a connection anyway before switching to HTTP/2 (TCP).
+ * Some networks block UDP to Cloudflare outright -- the tunnel then never
+ * connects (or, mid-run, drops and never comes back) while cloudflared keeps
+ * retrying QUIC.
+ */
+const QUIC_FALLBACK_GRACE_MS = 6000;
 
-function startTunnel(port: number): Promise<{ process: ChildProcess; url: string }> {
+function startTunnel(
+  port: number,
+  extraArgs: string[] = [],
+  onLine?: (text: string) => void
+): Promise<{ process: ChildProcess; url: string }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${port}`]);
+    const proc = spawn("cloudflared", ["tunnel", ...extraArgs, "--url", `http://localhost:${port}`]);
     let settled = false;
     const onOutput = (chunk: Buffer) => {
       const text = chunk.toString("utf8");
+      onLine?.(text);
       const match = text.match(CLOUDFLARE_URL_PATTERN);
       if (match && !settled) {
         settled = true;
@@ -308,9 +323,30 @@ async function main() {
   const caffeinate = spawn("caffeinate", ["-i", "-w", String(server.pid)]);
 
   log("Starting the tunnel…");
+  // TUNNEL_TRANSPORT_PROTOCOL (cloudflared reads it itself) is the manual
+  // override: when it's set, the protocol is left exactly as chosen.
+  const protocolOverride = process.env.TUNNEL_TRANSPORT_PROTOCOL;
+  let onHttp2 = protocolOverride !== undefined && protocolOverride !== "";
+  let quicTimer: NodeJS.Timeout | null = null;
+  let switching = false;
+  let tunnelReady = false;
+  const watchQuic = (text: string) => {
+    // cloudflared keeps retrying QUIC and logging each failure, so one seen
+    // before the first tunnel is ready is simply picked up again after.
+    if (onHttp2 || switching || !tunnelReady) return;
+    if (REGISTERED_PATTERN.test(text) && quicTimer) {
+      clearTimeout(quicTimer);
+      quicTimer = null;
+    }
+    if (QUIC_FAILURE_PATTERN.test(text) && !quicTimer) {
+      quicTimer = setTimeout(() => void switchToHttp2(), QUIC_FALLBACK_GRACE_MS);
+    }
+  };
+
   let tunnel: { process: ChildProcess; url: string };
   try {
-    tunnel = await startTunnel(PORT);
+    tunnel = await startTunnel(PORT, [], watchQuic);
+    tunnelReady = true;
   } catch (err) {
     cleanup(undefined, caffeinate);
     fail(err instanceof Error ? err.message : String(err));
@@ -323,6 +359,33 @@ async function main() {
   console.log(`[share] Press Ctrl+C to stop.`);
   console.log("");
 
+  const onTunnelExit = () => {
+    if (switching) return; // closed on purpose, for the HTTP/2 switch
+    log("The tunnel closed. Stopping the app too.");
+    cleanup(undefined, caffeinate);
+    process.exit(1);
+  };
+
+  async function switchToHttp2(): Promise<void> {
+    if (onHttp2 || switching) return;
+    switching = true;
+    quicTimer = null;
+    log("The tunnel couldn't connect over QUIC (UDP may be blocked on this network). Switching to HTTP/2…");
+    tunnel.process.kill();
+    try {
+      tunnel = await startTunnel(PORT, ["--protocol", "http2"]);
+    } catch (err) {
+      log(`The HTTP/2 tunnel didn't start either (${err instanceof Error ? err.message : err}). Stopping.`);
+      cleanup(undefined, caffeinate);
+      process.exit(1);
+    }
+    onHttp2 = true;
+    switching = false;
+    tunnel.process.on("exit", onTunnelExit);
+    console.log(`[share] Tunnel URL: ${tunnel.url}`);
+    updateVercelRedirect(tunnel.url);
+  }
+
   const onSignal = () => {
     cleanup(tunnel.process, caffeinate);
     process.exit(0);
@@ -331,11 +394,7 @@ async function main() {
   process.on("SIGTERM", onSignal);
 
   server.on("exit", () => cleanup(tunnel.process, caffeinate));
-  tunnel.process.on("exit", () => {
-    log("The tunnel closed. Stopping the app too.");
-    cleanup(undefined, caffeinate);
-    process.exit(1);
-  });
+  tunnel.process.on("exit", onTunnelExit);
 }
 
 main().catch((err) => fail(err instanceof Error ? err.stack ?? err.message : String(err)));
