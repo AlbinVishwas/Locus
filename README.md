@@ -137,6 +137,20 @@ with a message naming how much is used.
 | `MAX_UPLOAD_FILE_BYTES` | `104857600` (100 MB) | Largest single file accepted. |
 | `MAX_FILES_PER_CONVERSATION` | `20` | Per-conversation cap, independent of the storage cap. |
 
+## Document library (in progress)
+
+Index a large PDF library -- a folder or a database -- onto an external
+drive, for search beside session uploads. Off unless configured; nothing
+changes without its settings. Indexing is built (`npm run
+library:inventory`, `npm run index:library`, `npm run verify:library`);
+search in the app comes next. Everything the library writes goes on the
+external drive at `LOCUS_DATA_DIR` -- it refuses to run against the
+internal disk. Setup, settings, database config and the storage rule:
+[docs/library.md](docs/library.md). Design: [docs/library-plan.md](docs/library-plan.md).
+
+`npm run share` now switches its tunnel to HTTP/2 on its own when a
+network blocks QUIC/UDP (see [docs/sharing.md](docs/sharing.md)).
+
 ## Characterization tests
 
 `src/characterization/` pins today's behaviour exactly -- the upload flow

@@ -33,6 +33,11 @@ What it does, in order:
    doesn't go to sleep mid-conversation.
 6. Starts a Cloudflare quick tunnel to port 3000, gets back a one-off
    `*.trycloudflare.com` URL, then points the permanent link below at it.
+   cloudflared connects over QUIC (UDP) by default. If it reports a failed
+   QUIC connection and doesn't register one within a few seconds -- some
+   networks block UDP to Cloudflare -- `npm run share` restarts the tunnel
+   over HTTP/2 (TCP), prints the new URL and repoints the permanent link,
+   without stopping the app. That also covers QUIC dying mid-run.
 
 Press **Ctrl+C** to stop everything — the tunnel, the server, and
 caffeinate all stop together. The permanent link then shows a small
@@ -118,6 +123,12 @@ itself needs to change.
 - **The tunnel closes on its own** — `npm run share` notices and stops the
   server too, rather than leaving it running with no way to reach it.
   Quick tunnels can drop on a flaky connection; just run it again.
+- **The link shows "offline" or the tunnel URL answers 530** — usually
+  QUIC/UDP being blocked; `npm run share` switches to HTTP/2 on its own
+  (look for "Switching to HTTP/2" in its output). To choose the protocol
+  yourself, set `TUNNEL_TRANSPORT_PROTOCOL=http2` (or `quic`) when running
+  it: that's passed straight to cloudflared and turns the automatic switch
+  off.
 - **Port 3000 is already in use** — something else (often `npm run dev`)
   is already listening there. Stop it first; `npm run share` always uses
   port 3000.
