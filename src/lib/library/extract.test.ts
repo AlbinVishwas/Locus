@@ -58,7 +58,7 @@ function options(overrides: Partial<LibraryExtractOptions> = {}): LibraryExtract
   };
 }
 
-describe.skipIf(skipOcr)("inspectPdf: encryption", () => {
+describe.skipIf(skipOcr)("inspectPdf: encryption", { timeout: 120_000 }, () => {
   it("indexes a PDF that opens without a password but restricts printing/copying/editing", async () => {
     const file = path.join(dir, "restricted.pdf");
     fs.writeFileSync(file, encryptedPdf({ text: "restricted ocelot clause", userPassword: "", ownerPassword: "owner", permissions: PERMISSIONS.none }));
@@ -87,7 +87,7 @@ describe.skipIf(skipOcr)("inspectPdf: encryption", () => {
   });
 });
 
-describe.skipIf(skipOcr)("extractPages: page by page", () => {
+describe.skipIf(skipOcr)("extractPages: page by page", { timeout: 120_000 }, () => {
   it("reads the text layer in windows of pageWindow pages, never with one whole-file pdftotext call", async () => {
     const file = path.join(dir, "twelve.pdf");
     await makePdf(

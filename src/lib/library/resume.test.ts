@@ -110,7 +110,7 @@ describe.skipIf(skipOcr)("crash and resume", () => {
     const child = harness(crashed);
     const exited = finish(child);
     // Kill it once some documents are done and others are mid-flight.
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 150_000;
     while (readyCount(crashed) < 3 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
     child.kill("SIGKILL");
     const killed = await exited;

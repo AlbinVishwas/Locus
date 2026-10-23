@@ -18,7 +18,8 @@ afterEach(() => {
   // rm(1), not fs.rmSync: it can remove the over-PATH_MAX tree one test builds.
   execFileSync("rm", ["-rf", root]);
   vi.restoreAllMocks();
-});
+  // Removing the 60,000-file tree takes a while on a busy machine.
+}, 60_000);
 
 function touch(rel: string, content = "%PDF-1.4\n") {
   const file = path.join(root, rel);
