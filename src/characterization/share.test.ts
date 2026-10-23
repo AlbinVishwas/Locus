@@ -53,12 +53,22 @@ function installFakes({ cloudflared = true } = {}) {
   fake("caffeinate", `echo "$@" > "${record}/caffeinate.args"; exec sleep 600`);
 }
 
+/**
+ * A deliberately minimal environment for share, so nothing from the
+ * machine running the tests (a LOCUS_* in this shell, say) leaks in. Next's
+ * types make NODE_ENV a required key of ProcessEnv; share must start
+ * without one, exactly as `npm run share` does from a plain shell.
+ */
+function childEnv(vars: Record<string, string>): NodeJS.ProcessEnv {
+  return vars as unknown as NodeJS.ProcessEnv;
+}
+
 /** Runs share until it prints `until` (or exits), then stops it with SIGINT. */
 function runShare(env: Record<string, string>, until: RegExp, timeoutMs = 45_000) {
   return new Promise<{ output: string; code: number | null }>((resolve, reject) => {
     const child = spawn(process.execPath, [TSX, SHARE, "--no-vercel"], {
       cwd: work,
-      env: { HOME: work, PATH: `${bin}:/usr/bin:/bin`, ...env },
+      env: childEnv({ HOME: work, PATH: `${bin}:/usr/bin:/bin`, ...env }),
     });
     let output = "";
     let stopping = false;
@@ -174,7 +184,7 @@ describe("characterization: npm run share", () => {
     // treats the same as cloudflared missing.
     const child = spawn(process.execPath, [TSX, SHARE, "--no-vercel"], {
       cwd: work,
-      env: { HOME: work, PATH: bin, SESSION_SECRET: "x" },
+      env: childEnv({ HOME: work, PATH: bin, SESSION_SECRET: "x" }),
     });
     let output = "";
     child.stdout.on("data", (c) => (output += c));

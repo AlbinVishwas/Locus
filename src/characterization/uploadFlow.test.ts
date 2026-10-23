@@ -38,12 +38,16 @@ function listTree(root: string): string[] {
   return out.sort();
 }
 
-function uploadTempDirs(): string[] {
-  return fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("assay-upload-"));
-}
+let savedTmpdir: string | undefined;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "locus-char-upload-"));
+  // The upload pipeline puts its scratch dir in os.tmpdir(), which reads
+  // TMPDIR on every call. A private one for this test makes "created, then
+  // removed" observable without other test files' uploads in the way.
+  savedTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = path.join(dir, "tmp");
+  fs.mkdirSync(process.env.TMPDIR);
   process.env.SEARCH_INDEX_PATH = path.join(dir, "index", "search.db");
   process.env.UPLOADS_DIR = path.join(dir, "uploads");
   process.env.LOCUS_ENABLE_UPLOADS = "true";
@@ -58,6 +62,8 @@ afterEach(async () => {
   delete process.env.SEARCH_INDEX_PATH;
   delete process.env.UPLOADS_DIR;
   delete process.env.LOCUS_ENABLE_UPLOADS;
+  if (savedTmpdir === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = savedTmpdir;
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -68,14 +74,13 @@ describe("characterization: upload flow", () => {
       for (const tool of ["pdfinfo", "pdftotext", "pdftoppm", "pdfimages", "tesseract"]) {
         execFileSync("which", [tool], { stdio: "ignore" });
       }
-      const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "locus-char-fixture-"));
+      const fixtureDir = fs.mkdtempSync(path.join(dir, "fixture-"));
       const pdf = path.join(fixtureDir, "notice.pdf");
       await writeFixturePdf(pdf, [{ lines: ["the ocelot earnest money clause"] }, { lines: ["page two text"] }], {
         workDir: fixtureDir,
       });
       const bytes = fs.readFileSync(pdf);
       fs.rmSync(fixtureDir, { recursive: true, force: true });
-      const tempBefore = new Set(uploadTempDirs());
 
       // --- POST: the SSE stage sequence ---
       const form = new FormData();
@@ -141,6 +146,9 @@ describe("characterization: upload flow", () => {
       // --- Exactly where everything landed ---
       // (-wal/-shm are SQLite's own WAL side files, present while the
       // writable connection is open.)
+      // tmp/ is empty: the upload's scratch dir (assay-upload-*) was
+      // created there and removed once the upload finished.
+      expect(fs.readdirSync(path.join(dir, "tmp"))).toEqual([]);
       expect(listTree(dir)).toEqual([
         "index/ocr-cache.db",
         "index/search.db",
@@ -149,8 +157,6 @@ describe("characterization: upload flow", () => {
         `uploads/${sha256}.pdf`,
       ]);
       expect(fs.readFileSync(path.join(dir, "uploads", `${sha256}.pdf`)).equals(bytes)).toBe(true);
-      // The scratch dir in the OS temp folder is created per upload and removed after.
-      expect(uploadTempDirs().filter((n) => !tempBefore.has(n))).toEqual([]);
 
       // --- DELETE one file ---
       const del = await DELETE(new Request("http://localhost/api/uploads?conversationId=conv-1&docId=1", { method: "DELETE" }));
