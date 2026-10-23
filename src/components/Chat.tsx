@@ -84,8 +84,10 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           { tempId, name: file.name, stage: { type: "stage", stage: "uploading" } },
         ]);
 
+        let finished = false;
         uploadFile(conversation.id, file, (event) => {
           setUploading((prev) => prev.map((u) => (u.tempId === tempId ? { ...u, stage: event } : u)));
+          if (event.type === "ready" || event.type === "error") finished = true;
           if (event.type === "ready") {
             refreshFiles();
             setUploading((prev) => prev.filter((u) => u.tempId !== tempId));
@@ -93,6 +95,25 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           // An error stays visible in the chip (stageLabel shows its
           // message) rather than disappearing silently; the next attach
           // or a conversation switch is what clears it.
+        }).then(() => {
+          // The stream ended without ready or error: the connection dropped
+          // mid-processing. The server keeps indexing, so don't leave the chip
+          // claiming it's still uploading forever.
+          if (finished) return;
+          refreshFiles();
+          setUploading((prev) =>
+            prev.map((u) =>
+              u.tempId === tempId
+                ? {
+                    ...u,
+                    stage: {
+                      type: "error",
+                      message: "Connection lost while processing. It may still finish -- reload in a minute to check.",
+                    },
+                  }
+                : u
+            )
+          );
         }).catch(() => {
           setUploading((prev) =>
             prev.map((u) =>

@@ -60,6 +60,8 @@ beforeEach(() => {
 afterEach(async () => {
   const { _resetWritableDbForTests } = await import("@/lib/uploads/writableDb");
   _resetWritableDbForTests();
+  const { _resetSharedContextForTests } = await import("@/lib/uploads/pipeline");
+  _resetSharedContextForTests();
   delete process.env.SEARCH_INDEX_PATH;
   delete process.env.OCR_CACHE_PATH;
   delete process.env.UPLOADS_DIR;
@@ -131,6 +133,32 @@ describe("POST /api/uploads", () => {
     const { storedFileExists } = await import("@/lib/uploads/storage");
     expect(await storedFileExists(doc.sha256)).toBe(true);
   });
+
+  it.skipIf(skipOcr)("keeps indexing when the browser disconnects mid-upload", async () => {
+    assertToolsInstalled();
+    const realPdf = path.join(dir, "real.pdf");
+    await writeFixturePdf(realPdf, [{ lines: ["a real page of text"] }], { workDir: dir });
+
+    const res = await postForm({
+      conversationId: "c-gone",
+      file: new File([fs.readFileSync(realPdf)], "real.pdf", { type: "application/pdf" }),
+    });
+    // Read the first event, then hang up -- what a reload or a dropped
+    // tunnel connection looks like to the server.
+    const reader = res.body!.getReader();
+    await reader.read();
+    await reader.cancel();
+
+    const { getWritableDb } = await import("@/lib/uploads/writableDb");
+    const { uploadedDocuments } = await import("../../../../scripts/indexer/store");
+    await vi.waitFor(
+      () => {
+        const [doc] = uploadedDocuments(getWritableDb(), "c-gone");
+        expect(doc?.status).toBe("ready");
+      },
+      { timeout: 20_000, interval: 100 }
+    );
+  }, 30_000);
 
   it("rejects a file over MAX_UPLOAD_FILE_BYTES", async () => {
     process.env.MAX_UPLOAD_FILE_BYTES = "500";

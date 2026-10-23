@@ -79,11 +79,28 @@ export async function POST(req: Request) {
   const originalFilename = sanitizeOriginalFilename(file.name || "document.pdf");
   const encoder = new TextEncoder();
 
+  // Set once the browser goes away (tab closed, reload, tunnel dropped the
+  // connection). Indexing carries on regardless -- the file shows up in the
+  // conversation's list when it's done -- so sends just stop instead of
+  // throwing into indexUpload and aborting it.
+  let clientGone = false;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: object) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      const write = (chunk: string) => {
+        if (clientGone) return;
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          clientGone = true;
+        }
       };
+      const send = (event: object) => write(`data: ${JSON.stringify(event)}\n\n`);
+
+      // Reading a large PDF can go a long while between stage events; an SSE
+      // comment keeps proxies and tunnels from closing the connection as idle.
+      heartbeat = setInterval(() => write(": keep-alive\n\n"), 15_000);
 
       send({ type: "stage", stage: "uploading" });
 
@@ -105,8 +122,13 @@ export async function POST(req: Request) {
         console.error("[/api/uploads] indexing failed", { error: err });
         send({ type: "error", message: "Indexing failed. See the server log for details." });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        if (!clientGone) controller.close();
       }
+    },
+    cancel() {
+      clientGone = true;
+      clearInterval(heartbeat);
     },
   });
 
