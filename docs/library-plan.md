@@ -1,8 +1,7 @@
 # Document library — plan (Phase 0)
 
-Status: **Phase 1 built** (sources, pipeline, storage rule, `index:library`,
-`library:inventory`, `verify:library`): see "Phase 1: decisions and changes from the
-plan" at the end. Phase 2 (search in the app) not started. Restore point: tag
+Status: **Phases 1 and 2 built**: indexing, then search in the app (see the
+notes at the end). Phase 3 (the trial) is next. Restore point: tag
 `pre-library` (commit `ee9b8e0`). User docs: [library.md](library.md).
 
 The goal: search a large document library (target ~50,000 PDFs, in a test folder
@@ -553,3 +552,32 @@ disturbed.
 | `inventory.test.ts` | Histogram quantiles within 1%. Reservoir merge stays uniform. **Stop-and-rerun totals equal an uninterrupted scan.** Sampling, OCR timing, index size, projection, report. |
 | `verify.test.ts` | No disagreements on a correct index; a corrupted one is caught. |
 | `scripts/share.test.ts` | QUIC→HTTP/2 switch; no switch when QUIC recovers; the env var override. |
+
+---
+
+## Phase 2: what was built, and changes from the plan
+
+- **Search** (`src/lib/library/query.ts`, `/api/library/search`), as planned:
+  - Hits in windows of 50 by rowid cursor, with no page map in memory.
+  - Counts are taken once, on the first window, by walking the match list with a 300 ms budget; past that they're reported as "at least".
+  - Queries under 3 characters are refused with a message.
+  - A loose-mode count is offered when exact finds nothing.
+- **Order is document order (index order), then page.** It's not sorted by path, because keeping a path order stable while files are added would need a rank that changes on every insert. Paths are shown on every hit.
+- **"Drive connected" in the app means the marker file is present and on the same device.** The app doesn't run `diskutil` per request: it only reads, and the indexer already verified the volume when it wrote the marker.
+- **Status** (`/api/library/status`) shows counts only, never paths.
+- **UI:**
+  - The scope switch and status line (`LibraryBar`) render only with the library enabled.
+  - Each turn gets a library card (`LibraryResultCard`).
+  - The session scope runs the old code path unchanged.
+  - With chat on, the library card is added above the reply. Session search in chat mode is unchanged, so with chat on the session card still appears in "Library" scope; only chat-off honours "Library" as library-only.
+- **Small change to an existing file:** `SearchResultCard.tsx` now exports its `Snippet` and `Badge` helpers (the `export` keyword only), so library hits render exactly like session hits.
+- **The share health check and e2e upload wait** were added before Phase 2 (see `docs/sharing.md`).
+
+### Phase 2 tests
+
+| File | Covers |
+| --- | --- |
+| `src/lib/library/query.test.ts` | Order, path names, labels, OCR flags, snippets. **Cursor paging equals a brute-force scan** (no gaps or repeats). Time-budgeted counts. Short queries. Loose count. Still-indexing flag. FTS syntax treated as literal text. |
+| `src/app/api/library/library-routes.test.ts` | 404 when off. Exact response snapshot. Quoted text. Paging via the route. **No absolute path in any response.** Status counts. **Drive disconnected and reconnected.** Unconfigured and empty states. Too short. Bad input. |
+| `src/components/library.test.tsx` | Card states and messages, "at least", the show-more labels. **The bar renders nothing with the library off.** The scope switch's default. Status-line text. **A message with no library result renders identically with the library on or off.** Chat-on placement above the reply. |
+| `scripts/e2e-library.mjs` | Browser, library on, chat off (20 checks) and chat on (5 checks). |

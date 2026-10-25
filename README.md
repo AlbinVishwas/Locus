@@ -141,9 +141,10 @@ with a message naming how much is used.
 
 Index a large PDF library -- a folder or a database -- onto an external
 drive, for search beside session uploads. Off unless configured; nothing
-changes without its settings. Indexing is built (`npm run
-library:inventory`, `npm run index:library`, `npm run verify:library`);
-search in the app comes next. Everything the library writes goes on the
+changes without its settings. Indexing (`npm run library:inventory`,
+`npm run index:library`, `npm run verify:library`) and search in the app
+(`LOCUS_LIBRARY_ENABLED=true`: a This session / Library / Both switch, a
+status line, paged library results) are built. Everything the library writes goes on the
 external drive at `LOCUS_DATA_DIR` -- it refuses to run against the
 internal disk. Setup, settings, database config and the storage rule:
 [docs/library.md](docs/library.md). Design: [docs/library-plan.md](docs/library-plan.md).

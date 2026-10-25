@@ -4,9 +4,9 @@ Search a large library of PDFs (a folder, or rows in a database) beside each
 session's uploads. **Everything here is off unless configured.** With none
 of these settings, Locus behaves exactly as it always has.
 
-Status: Phase 1 is built (indexing: sources, pipeline, storage rule,
-`index:library`, `library:inventory`). Search in the app is Phase 2. Design
-and decisions: [library-plan.md](library-plan.md).
+Status: indexing (Phase 1) and search in the app (Phase 2) are built.
+Phase 3 (a trial on the real library) is next. Design and decisions:
+[library-plan.md](library-plan.md).
 
 ## The storage rule
 
@@ -76,6 +76,53 @@ over 4 GB, and the index will be far bigger than that.
     That's why the npm scripts run `node --import tsx` with
     `TSX_DISABLE_CACHE=1` instead: that combination writes nothing.
 
+## Searching the library in the app
+
+Add to `.env.local` and restart (`npm run share`, or `npm run dev`):
+
+```bash
+LOCUS_LIBRARY_ENABLED=true                    # library search in the app (off by default)
+LOCUS_DATA_DIR=/Volumes/LocusSSD/locus-data   # where index:library put the index
+LOCUS_SEARCH_SCOPE=session                    # optional default: session | library | both
+```
+
+Then:
+
+- **A scope switch** (This session / Library / Both) sits by the search box.
+  Each browser remembers its own choice, starting from
+  `LOCUS_SEARCH_SCOPE`.
+- **The status line** next to it shows documents, pages indexed, still
+  indexing, not indexed, and whether the drive is connected. It refreshes
+  every 30 s.
+- **This session:** exactly today's search over the session's own uploads.
+  **Library:** the library only; the session isn't searched, and there's
+  no "upload documents" prompt. **Both:** two cards per turn, the
+  session's and the library's. They're kept apart rather than merged,
+  because merging two differently sized result sets would invent an
+  ordering neither has.
+- **Library results** show the folder-relative path (or `db:<id> ·
+  filename`), the page, a snippet, and badges for OCR-only matches and
+  documents still being indexed. Paths on the server are never shown.
+  Results come 50 pages at a time, with "Show next 50"; the browser never
+  receives the whole result. Counts are exact unless counting takes over
+  300 ms, in which case they read "at least N".
+- **Queries under 3 characters** get "Type at least 3 characters" for the
+  library (the index can't look up shorter text, and a full scan of
+  millions of pages would be too slow). Session search is unchanged.
+- **No exact match:** the card offers "N pages match without exact
+  punctuation", the same as session search.
+- **Drive unplugged:** the card and the status line say "Library drive not
+  connected". Nothing crashes, and searches include the library again as
+  soon as the drive is back, with no restart.
+- **Chat on:** the library card appears above the model's reply. The
+  model never sees library documents, as with session files.
+- **With `LOCUS_LIBRARY_ENABLED` unset,** none of this exists: the routes
+  answer 404, no library UI renders, and the browser gets exactly what it
+  did before.
+
+The app only ever reads the library index (a read-only connection); the
+indexer is the one writer.
+
 ## Quick start (folder)
 
 ```bash
@@ -99,7 +146,8 @@ npm run verify:library        # brute-force check of the index
 | `npm run index:library -- --retry-failed` | Also retries files that failed before. Normally a failure is only retried once the file changes. |
 | `npm run index:library -- --sample N [--seed S]` | Indexes a uniform random N of the PDFs only: the trial. |
 | `npm run index:library -- --status` | Counts: documents, pages, queued, failures by kind. |
-| `npm run verify:library` | Picks random documents and checks that the index's matches equal a plain substring scan of their text. Exits 1 on any difference. |
+| `npm run verify:library` | Picks random documents and checks that the index's matches equal a plain substring scan of their text. Exits 1 on any difference. `LIBRARY_INDEX_FILE=<file>` checks a specific index file instead. |
+| `npm run e2e:library:setup -- <dataDir>` then `npm run e2e:library` | Browser end-to-end with the library on: builds a 3-PDF scratch library, then checks the scope switch, status line, library-only / Both searches, paging, the short-query and punctuation messages, disconnecting and reconnecting the drive, and that no absolute path is shown. `E2E_CHAT=true` runs the chat-on variant. Usage at the top of `scripts/e2e-library.mjs`. |
 
 ## What gets indexed, and what's skipped
 
@@ -156,6 +204,8 @@ All are optional; none does anything until set.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `LOCUS_LIBRARY_ENABLED` | `false` | Library search in the app (scope switch, status line, library results). |
+| `LOCUS_SEARCH_SCOPE` | `session` | Default scope: `session`, `library` or `both`. |
 | `LOCUS_DATA_DIR` | — | Where the library writes everything. An existing folder on an external APFS drive. |
 | `LOCUS_LIBRARY_DIR` | — | Folder source. |
 | `LIBRARY_DB_URL`, `LIBRARY_DB_QUERY` | — | Database source (below). |
