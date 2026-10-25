@@ -23,6 +23,9 @@ import { chromium } from "playwright";
 
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 const PASSCODE = process.env.E2E_PASSCODE;
+// Uploads OCR every page (OCR_PAGES=all); with a cold OCR cache, the two test
+// PDFs (313 pages) took ~3.5 min on a loaded laptop. 15 minutes leaves room.
+const UPLOAD_TIMEOUT_MS = Number(process.env.E2E_UPLOAD_TIMEOUT_MS ?? 15 * 60 * 1000);
 const TENDERS_DIR = process.env.TENDERS_DIR ?? path.resolve("data/tenders");
 const FILE_A = path.join(TENDERS_DIR, "26033Terms-2026-09-23-01_20_49.pdf"); // contains "Tiruchirappalli", p.97 among others
 const FILE_B = path.join(TENDERS_DIR, "Bidding_docs-2026-09-16-04_46_27.pdf"); // contains "Spectrophotometer"
@@ -64,7 +67,7 @@ async function main() {
   await page.waitForFunction(
     () => (document.body.innerText.match(/\d+ pages?/g) ?? []).length >= 2,
     null,
-    { timeout: 180000 }
+    { timeout: UPLOAD_TIMEOUT_MS }
   );
   check("both uploaded files reach Ready (show a page count)", true);
 
