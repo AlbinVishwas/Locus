@@ -4,6 +4,7 @@ import "./globals.css";
 import { ConversationsProvider } from "@/components/ConversationsProvider";
 import { FeaturesProvider } from "@/components/FeaturesProvider";
 import { isChatEnabled } from "@/config/features";
+import { isLibraryEnabled, searchScope, type SearchScope } from "@/lib/library/config";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -24,11 +25,25 @@ export async function generateMetadata(): Promise<Metadata> {
 // when uploads are disabled (e.g. on Vercel).
 ensureRetentionScheduleStarted();
 
+function defaultScope(): SearchScope {
+  try {
+    return searchScope();
+  } catch (err) {
+    console.error(`[library] ${err instanceof Error ? err.message : err}; using "session"`);
+    return "session";
+  }
+}
+
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   // Request time, not build time: LOCUS_CHAT_ENABLED is read when the
   // page is served, so flipping it takes a restart, never a rebuild.
   await connection();
-  const features = { chatEnabled: isChatEnabled() };
+  const libraryEnabled = isLibraryEnabled();
+  // Only computed (and only sent) with the library on: with it off, the
+  // browser gets exactly what it always did.
+  const features = libraryEnabled
+    ? { chatEnabled: isChatEnabled(), libraryEnabled, defaultScope: defaultScope() }
+    : { chatEnabled: isChatEnabled() };
 
   return (
     <html lang="en" className="h-full antialiased">

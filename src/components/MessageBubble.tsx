@@ -2,6 +2,7 @@
 
 import type { DisplayMessage } from "@/lib/types";
 import { useFeatures } from "./FeaturesProvider";
+import LibraryResultCard from "./LibraryResultCard";
 import SearchResultCard from "./SearchResultCard";
 import StageLine from "./StageLine";
 import ThinkingSection from "./ThinkingSection";
@@ -58,6 +59,9 @@ export default function MessageBubble({
           looseAlternative={message.looseAlternative}
           conversationId={conversationId}
         />
+      )}
+      {(message.libraryResult || message.libraryFailure) && (
+        <LibraryResultCard response={message.libraryResult} failure={message.libraryFailure} />
       )}
       {message.filesExpired && (
         <p className="mb-3 text-[13px] text-secondary">
@@ -126,6 +130,9 @@ function SearchOnlyReply({
           searchOnly
           conversationId={conversationId}
         />
+      )}
+      {(message.libraryResult || message.libraryFailure) && (
+        <LibraryResultCard response={message.libraryResult} failure={message.libraryFailure} />
       )}
       {message.noFiles && (
         <p className="mb-3 text-[13px] text-secondary">

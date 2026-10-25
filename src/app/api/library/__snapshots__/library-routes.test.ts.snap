@@ -1,0 +1,72 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`library routes > search: finds pages and returns this exact shape 1`] = `
+{
+  "counts": {
+    "complete": true,
+    "documents": 2,
+    "pages": 2,
+  },
+  "hits": [
+    {
+      "displayName": "Tenders/2026/notice.pdf",
+      "docId": 1,
+      "matchedIn": [
+        "layer",
+      ],
+      "ocrOnly": false,
+      "pageLabel": null,
+      "pageNo": 1,
+      "snippet": [
+        {
+          "hit": false,
+          "text": "the ",
+        },
+        {
+          "hit": true,
+          "text": "ocelot",
+        },
+        {
+          "hit": false,
+          "text": " clause",
+        },
+      ],
+      "source": "text",
+      "stillIndexing": false,
+    },
+    {
+      "displayName": "Tenders/2025/old.pdf",
+      "docId": 2,
+      "matchedIn": [
+        "layer",
+      ],
+      "ocrOnly": false,
+      "pageLabel": null,
+      "pageNo": 1,
+      "snippet": [
+        {
+          "hit": false,
+          "text": "an ",
+        },
+        {
+          "hit": true,
+          "text": "ocelot",
+        },
+        {
+          "hit": false,
+          "text": " again",
+        },
+      ],
+      "source": "text",
+      "stillIndexing": false,
+    },
+  ],
+  "limit": 50,
+  "looseCount": null,
+  "mode": "exact",
+  "nextCursor": null,
+  "prepared": "ocelot",
+  "query": "ocelot",
+  "tookMs": "<ms>",
+}
+`;

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ConversationFile } from "@/lib/uploadsClient";
 import type { InProgressUpload } from "./AttachmentList";
 import ChatInput from "./ChatInput";
+import LibraryBar from "./LibraryBar";
 import { useFeatures } from "./FeaturesProvider";
 import ModelPill from "./ModelPill";
 
@@ -65,6 +66,7 @@ export default function EmptyState({
           onAttachFiles={onAttachFiles}
           onRemoveFile={onRemoveFile}
         />
+        <LibraryBar className="mt-4 w-full max-w-[720px]" />
         <p className="mt-6 text-center text-[13px] text-secondary">
           Runs on this laptop. Uploaded files stay private to their{" "}
           {chatEnabled ? "conversation" : "session"}.

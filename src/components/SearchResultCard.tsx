@@ -240,7 +240,7 @@ function DocumentGroup({ filename, hits, totalHits }: { filename: string; hits: 
   );
 }
 
-function Snippet({ parts }: { parts: SnippetPart[] }) {
+export function Snippet({ parts }: { parts: SnippetPart[] }) {
   return (
     <>
       {parts.map((part, i) => {
@@ -257,7 +257,7 @@ function Snippet({ parts }: { parts: SnippetPart[] }) {
   );
 }
 
-function Badge({ children, title }: { children: React.ReactNode; title: string }) {
+export function Badge({ children, title }: { children: React.ReactNode; title: string }) {
   return (
     <span
       title={title}

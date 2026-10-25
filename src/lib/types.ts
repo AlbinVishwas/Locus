@@ -1,3 +1,4 @@
+import type { LibrarySearchResponse } from "./libraryClient";
 import type { SearchResult } from "./search/query";
 
 export type ChatRole = "user" | "assistant" | "system";
@@ -69,6 +70,15 @@ export interface DisplayMessage {
    * documents. Set client-side from /api/session-search's "no-files".
    */
   noFiles?: boolean;
+  /**
+   * This turn's document-library search, when the library is enabled and
+   * the search scope included it: the server's answer as-is (results, or
+   * why there are none -- drive not connected, query too short...).
+   * Rendered as its own card, never sent to the model.
+   */
+  libraryResult?: LibrarySearchResponse | null;
+  /** The library search itself failed (network, server error). */
+  libraryFailure?: string | null;
 }
 
 export interface Conversation {

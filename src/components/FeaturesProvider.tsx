@@ -4,6 +4,10 @@ import { createContext, useContext } from "react";
 
 export interface ClientFeatures {
   chatEnabled: boolean;
+  /** The document library (LOCUS_LIBRARY_ENABLED). Absent or false: no library UI at all. */
+  libraryEnabled?: boolean;
+  /** LOCUS_SEARCH_SCOPE: where searches look until someone picks otherwise. Only used with the library on. */
+  defaultScope?: "session" | "library" | "both";
 }
 
 /**

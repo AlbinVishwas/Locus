@@ -18,7 +18,9 @@
     "e2e:chat": "node scripts/e2e-smoke.mjs",
     "index:library": "TSX_DISABLE_CACHE=1 node --import tsx scripts/index-library.ts",
     "library:inventory": "TSX_DISABLE_CACHE=1 node --import tsx scripts/library-inventory.ts",
-    "verify:library": "TSX_DISABLE_CACHE=1 node --import tsx scripts/verify-library.ts"
+    "verify:library": "TSX_DISABLE_CACHE=1 node --import tsx scripts/verify-library.ts",
+    "e2e:library": "node scripts/e2e-library.mjs",
+    "e2e:library:setup": "TSX_DISABLE_CACHE=1 node --import tsx scripts/e2e-library-setup.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

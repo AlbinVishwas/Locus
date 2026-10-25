@@ -5,6 +5,8 @@ import { parseSSEStream } from "@/lib/parseSSE";
 import { createId } from "@/lib/id";
 import { getAppConfig } from "@/lib/configClient";
 import { toHistoryPayload } from "@/lib/history";
+import { searchLibrary } from "@/lib/libraryClient";
+import { getSearchScope, type SearchScope } from "@/lib/searchScope";
 import { searchSession } from "@/lib/sessionSearchClient";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import {
@@ -16,6 +18,7 @@ import {
 import type { InProgressUpload } from "./AttachmentList";
 import ConversationHeader from "./ConversationHeader";
 import EmptyState from "./EmptyState";
+import LibraryBar from "./LibraryBar";
 import { useFeatures } from "./FeaturesProvider";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
@@ -38,7 +41,7 @@ interface ChatProps {
  * this component does not own the conversation list itself.
  */
 export default function Chat({ conversation, onMessagesChange }: ChatProps) {
-  const { chatEnabled } = useFeatures();
+  const { chatEnabled, libraryEnabled, defaultScope = "session" } = useFeatures();
   const [messages, setMessages] = useState<DisplayMessage[]>(conversation.messages);
   const [isStreaming, setIsStreaming] = useState(false);
   // Transient read-phase state for the in-flight turn only. Deliberately not
@@ -212,6 +215,36 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
     [commitMessages]
   );
 
+  // With the library off, every search is a session search, exactly as
+  // before; the scope switch only exists with it on.
+  const currentScope = useCallback(
+    (): SearchScope => (libraryEnabled ? getSearchScope(defaultScope) : "session"),
+    [libraryEnabled, defaultScope]
+  );
+
+  /**
+   * The library half of a turn: its result (or why there is none) goes on
+   * the assistant message as its own card. Resolves true once something is
+   * shown, false if the turn was aborted first.
+   */
+  const runLibrarySearch = useCallback(
+    async (assistantId: string, text: string, signal: AbortSignal): Promise<boolean> => {
+      try {
+        const libraryResult = await searchLibrary(text, signal);
+        patchAssistantMessage(assistantId, (m) => ({ ...m, libraryResult }));
+        return true;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return false;
+        patchAssistantMessage(assistantId, (m) => ({
+          ...m,
+          libraryFailure: err instanceof Error ? err.message : "Library search failed.",
+        }));
+        return true;
+      }
+    },
+    [patchAssistantMessage]
+  );
+
   const sendMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -264,6 +297,9 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      // The library card sits above the reply like the session card; the
+      // model is never shown either.
+      const libraryRun = currentScope() !== "session" ? runLibrarySearch(assistantId, trimmed, controller.signal) : null;
 
       let reasoningStartedAt: number | null = null;
       let reasoningEndedAt: number | null = null;
@@ -364,6 +400,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         // Covers the paths that never reach a token: abort, network error, or
         // a stream that ends after "fetching" without generating.
         setFetchingUrls(null);
+        if (libraryRun && (await libraryRun)) hasVisibleOutput = true;
         if (hasVisibleOutput) {
           patchAssistantMessage(assistantId, (m) => ({ ...m, isStreaming: false }));
         } else {
@@ -373,7 +410,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         abortControllerRef.current = null;
       }
     },
-    [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id]
+    [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id, currentScope, runLibrarySearch]
   );
 
   /**
@@ -414,23 +451,33 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
+      const scope = currentScope();
       try {
-        const outcome = await searchSession(conversation.id, trimmed, controller.signal);
-        if (outcome.status === "ok") {
-          patchAssistantMessage(assistantId, (m) => ({
-            ...m,
-            searchResult: outcome.result,
-            looseAlternative: outcome.looseAlternative,
-          }));
-        } else {
-          // Same distinction as sendMessage's expired-files notice: with
-          // retention on, a session that used to have results lost its
-          // files to expiry; otherwise it simply has none yet.
-          const filesExpired =
-            retentionEnabledRef.current && messages.some((m) => m.searchResult != null);
-          patchAssistantMessage(assistantId, (m) =>
-            filesExpired ? { ...m, filesExpired: true } : { ...m, noFiles: true }
-          );
+        // "Library" or "Both": the library search runs alongside.
+        const libraryRun = scope !== "session" ? runLibrarySearch(assistantId, trimmed, controller.signal) : null;
+        if (scope !== "library") {
+          const outcome = await searchSession(conversation.id, trimmed, controller.signal);
+          if (outcome.status === "ok") {
+            patchAssistantMessage(assistantId, (m) => ({
+              ...m,
+              searchResult: outcome.result,
+              looseAlternative: outcome.looseAlternative,
+            }));
+          } else {
+            // Same distinction as sendMessage's expired-files notice: with
+            // retention on, a session that used to have results lost its
+            // files to expiry; otherwise it simply has none yet.
+            const filesExpired =
+              retentionEnabledRef.current && messages.some((m) => m.searchResult != null);
+            patchAssistantMessage(assistantId, (m) =>
+              filesExpired ? { ...m, filesExpired: true } : { ...m, noFiles: true }
+            );
+          }
+        }
+        if (libraryRun && !(await libraryRun) && scope === "library") {
+          // Aborted before anything came back: drop the empty turn.
+          commitMessages((prev) => prev.filter((m) => m.id !== assistantId));
+          return;
         }
         patchAssistantMessage(assistantId, (m) => ({ ...m, isStreaming: false }));
       } catch (err) {
@@ -449,7 +496,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         abortControllerRef.current = null;
       }
     },
-    [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id]
+    [messages, isStreaming, commitMessages, patchAssistantMessage, conversation.id, currentScope, runLibrarySearch]
   );
 
   const send = chatEnabled ? sendMessage : sendSearch;
@@ -492,6 +539,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           conversationId={conversation.id}
         />
       </div>
+      <LibraryBar className="mx-auto w-full max-w-[760px] px-4 pt-2 sm:px-6" />
       <ChatInput
         isStreaming={isStreaming}
         onSend={send}
