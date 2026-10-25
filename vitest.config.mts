@@ -17,6 +17,7 @@ const LIBRARY_INTEGRATION = [
   "src/lib/library/walk.test.ts",
   "src/lib/library/verify.test.ts",
   "scripts/share.test.ts",
+  "scripts/share-health.test.ts",
 ];
 
 export default defineConfig({

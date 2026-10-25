@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
@@ -210,6 +210,57 @@ const REGISTERED_PATTERN = /Registered tunnel connection/;
  */
 const QUIC_FALLBACK_GRACE_MS = 6000;
 
+/**
+ * Health check: a quick tunnel can stop working with nothing in
+ * cloudflared's output -- Cloudflare drops its hostname, the process keeps
+ * running, and the link just shows "offline". So every
+ * SHARE_HEALTH_INTERVAL_SECONDS (default 60) share fetches its own public
+ * tunnel URL, and the permanent link, the way a visitor would. After
+ * HEALTH_FAILURES_BEFORE_ACTION failures in a row it replaces the tunnel
+ * (only the tunnel: the app server keeps running throughout) and repoints
+ * the permanent link; if only the permanent link is wrong, it just
+ * repoints that.
+ */
+const HEALTH_INTERVAL_MS = Math.max(1, Number(process.env.SHARE_HEALTH_INTERVAL_SECONDS || 60)) * 1000;
+const HEALTH_FAILURES_BEFORE_ACTION = 3;
+
+const CURL_ERRORS: Record<number, string> = {
+  6: "couldn't resolve the hostname",
+  7: "couldn't connect",
+  28: "timed out",
+  35: "TLS handshake failed",
+  52: "empty reply",
+  56: "connection reset",
+};
+
+interface Probe {
+  /** HTTP status, or 0 if no response at all. */
+  status: number;
+  location: string;
+  detail: string;
+}
+
+/** One request to `url`, through curl, the way a visitor's browser would make it (no redirects followed). */
+function probe(url: string): Promise<Probe> {
+  return new Promise((resolve) => {
+    execFile(
+      "curl",
+      ["-s", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", "--max-time", "10", url],
+      { timeout: 15_000 },
+      (err, stdout) => {
+        const [code, location = ""] = String(stdout ?? "").trim().split(" ");
+        const status = Number(code) || 0;
+        if (err && status === 0) {
+          const exit = typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : -1;
+          resolve({ status: 0, location: "", detail: CURL_ERRORS[exit] ?? `curl exit ${exit}` });
+          return;
+        }
+        resolve({ status, location, detail: `HTTP ${status}` });
+      }
+    );
+  });
+}
+
 function startTunnel(
   port: number,
   extraArgs: string[] = [],
@@ -326,20 +377,24 @@ async function main() {
   // TUNNEL_TRANSPORT_PROTOCOL (cloudflared reads it itself) is the manual
   // override: when it's set, the protocol is left exactly as chosen.
   const protocolOverride = process.env.TUNNEL_TRANSPORT_PROTOCOL;
-  let onHttp2 = protocolOverride !== undefined && protocolOverride !== "";
+  const autoFallback = protocolOverride === undefined || protocolOverride === "";
+  let onHttp2 = false;
   let quicTimer: NodeJS.Timeout | null = null;
   let switching = false;
   let tunnelReady = false;
   const watchQuic = (text: string) => {
     // cloudflared keeps retrying QUIC and logging each failure, so one seen
-    // before the first tunnel is ready is simply picked up again after.
-    if (onHttp2 || switching || !tunnelReady) return;
+    // before the tunnel is ready is simply picked up again after.
+    if (!autoFallback || onHttp2 || switching || !tunnelReady) return;
     if (REGISTERED_PATTERN.test(text) && quicTimer) {
       clearTimeout(quicTimer);
       quicTimer = null;
     }
     if (QUIC_FAILURE_PATTERN.test(text) && !quicTimer) {
-      quicTimer = setTimeout(() => void switchToHttp2(), QUIC_FALLBACK_GRACE_MS);
+      quicTimer = setTimeout(() => {
+        log("The tunnel couldn't connect over QUIC (UDP may be blocked on this network). Switching to HTTP/2…");
+        void replaceTunnel(true);
+      }, QUIC_FALLBACK_GRACE_MS);
     }
   };
 
@@ -359,32 +414,93 @@ async function main() {
   console.log(`[share] Press Ctrl+C to stop.`);
   console.log("");
 
-  const onTunnelExit = () => {
-    if (switching) return; // closed on purpose, for the HTTP/2 switch
-    log("The tunnel closed. Stopping the app too.");
-    cleanup(undefined, caffeinate);
-    process.exit(1);
+  // Only the current tunnel closing on its own stops the app; one share
+  // retired on purpose (the HTTP/2 switch, a health-check restart) doesn't.
+  const watchExit = (proc: ChildProcess) => {
+    proc.on("exit", () => {
+      if (proc !== tunnel.process || switching) return;
+      log("The tunnel closed. Stopping the app too.");
+      cleanup(undefined, caffeinate);
+      process.exit(1);
+    });
   };
 
-  async function switchToHttp2(): Promise<void> {
-    if (onHttp2 || switching) return;
+  /**
+   * A new tunnel in place of the current one -- over HTTP/2, or as before
+   * (still watching QUIC, so the automatic switch applies to it too). The
+   * app server isn't touched; the permanent link is repointed.
+   */
+  async function replaceTunnel(http2: boolean): Promise<void> {
+    if (switching) return;
     switching = true;
+    if (quicTimer) clearTimeout(quicTimer);
     quicTimer = null;
-    log("The tunnel couldn't connect over QUIC (UDP may be blocked on this network). Switching to HTTP/2…");
+    tunnelReady = false;
     tunnel.process.kill();
     try {
-      tunnel = await startTunnel(PORT, ["--protocol", "http2"]);
+      tunnel = await startTunnel(PORT, http2 ? ["--protocol", "http2"] : [], watchQuic);
     } catch (err) {
-      log(`The HTTP/2 tunnel didn't start either (${err instanceof Error ? err.message : err}). Stopping.`);
+      log(`The new tunnel didn't start (${err instanceof Error ? err.message : err}). Stopping.`);
       cleanup(undefined, caffeinate);
       process.exit(1);
     }
-    onHttp2 = true;
+    onHttp2 = http2;
+    tunnelReady = true;
     switching = false;
-    tunnel.process.on("exit", onTunnelExit);
+    tunnelFailures = 0;
+    linkFailures = 0;
+    watchExit(tunnel.process);
     console.log(`[share] Tunnel URL: ${tunnel.url}`);
     updateVercelRedirect(tunnel.url);
   }
+
+  let tunnelFailures = 0;
+  let linkFailures = 0;
+  let checking = false;
+  const healthCheck = async () => {
+    if (switching || checking) return;
+    checking = true;
+    try {
+      const url = tunnel.url;
+      const t = await probe(url);
+      // The app answers (a redirect to /login, normally); Cloudflare's own
+      // "tunnel not found / origin unreachable" pages are 5xx (530 and co.).
+      const tunnelOk = t.status >= 200 && t.status < 500;
+      if (switching || url !== tunnel.url) return;
+      if (!tunnelOk) {
+        tunnelFailures++;
+        log(`Health check: the tunnel isn't reachable (${t.detail}) -- ${tunnelFailures} of ${HEALTH_FAILURES_BEFORE_ACTION}.`);
+        if (tunnelFailures >= HEALTH_FAILURES_BEFORE_ACTION) {
+          log("Health check: replacing the tunnel. The app keeps running.");
+          await replaceTunnel(onHttp2);
+        }
+        return;
+      }
+      if (tunnelFailures > 0) log("Health check: the tunnel is reachable again.");
+      tunnelFailures = 0;
+
+      if (NO_VERCEL) return;
+      const v = await probe(VERCEL_PUBLIC_URL);
+      const linkOk = v.status >= 300 && v.status < 400 && v.location.startsWith(tunnel.url);
+      if (switching || url !== tunnel.url) return;
+      if (!linkOk) {
+        linkFailures++;
+        const what = v.status === 0 ? v.detail : v.location ? `points at ${v.location}` : `${v.detail}, not a redirect to this tunnel`;
+        log(`Health check: the permanent link isn't pointing here (${what}) -- ${linkFailures} of ${HEALTH_FAILURES_BEFORE_ACTION}.`);
+        if (linkFailures >= HEALTH_FAILURES_BEFORE_ACTION) {
+          linkFailures = 0;
+          log("Health check: repointing the permanent link at this tunnel.");
+          updateVercelRedirect(tunnel.url);
+        }
+        return;
+      }
+      if (linkFailures > 0) log("Health check: the permanent link points here again.");
+      linkFailures = 0;
+    } finally {
+      checking = false;
+    }
+  };
+  setInterval(() => void healthCheck(), HEALTH_INTERVAL_MS);
 
   const onSignal = () => {
     cleanup(tunnel.process, caffeinate);
@@ -394,7 +510,7 @@ async function main() {
   process.on("SIGTERM", onSignal);
 
   server.on("exit", () => cleanup(tunnel.process, caffeinate));
-  tunnel.process.on("exit", onTunnelExit);
+  watchExit(tunnel.process);
 }
 
 main().catch((err) => fail(err instanceof Error ? err.stack ?? err.message : String(err)));

@@ -38,6 +38,16 @@ What it does, in order:
    networks block UDP to Cloudflare -- `npm run share` restarts the tunnel
    over HTTP/2 (TCP), prints the new URL and repoints the permanent link,
    without stopping the app. That also covers QUIC dying mid-run.
+7. Keeps checking that it's reachable. Every 60 seconds it fetches its own
+   tunnel URL and the permanent link, as a visitor would. A quick tunnel
+   can stop working with nothing in cloudflared's output -- Cloudflare
+   drops the hostname and the link shows "offline" -- so after 3 failed
+   checks in a row it replaces the tunnel (keeping HTTP/2 if it had
+   switched) and repoints the permanent link. If only the permanent link
+   is wrong (pointing at another tunnel), it repoints just that. The app
+   server keeps running throughout, and every check that fails and every
+   action is logged ("Health check: …"). `SHARE_HEALTH_INTERVAL_SECONDS`
+   changes how often it checks.
 
 Press **Ctrl+C** to stop everything — the tunnel, the server, and
 caffeinate all stop together. The permanent link then shows a small
