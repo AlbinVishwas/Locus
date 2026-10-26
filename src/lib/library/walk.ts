@@ -30,6 +30,7 @@ export type SkipReason =
   | "not-downloaded"
   | "still-being-written"
   | "not-a-pdf"
+  | "not-allowed"
   | "error";
 
 export interface SkipRecord {

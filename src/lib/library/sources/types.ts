@@ -35,7 +35,7 @@ export interface OpenedFile {
 
 export interface LibrarySource {
   readonly id: string;
-  readonly kind: "folder" | "database" | "upload";
+  readonly kind: "folder" | "database" | "drive" | "upload";
   /** For status and logs. Never contains credentials or absolute paths a browser could see. */
   readonly label: string;
   /** What people see for this source (the scope dropdown, hits). Never a path. */

@@ -15,6 +15,7 @@ import {
   beginDocument,
   clearFailure,
   deleteLibraryDocument,
+  dropSource,
   failDocument,
   finishScan,
   knownDocuments,
@@ -26,13 +27,18 @@ import {
   quickCheck,
   recordFailure,
   registerSource,
+  removeSourceContent,
   renameCandidate,
   renameLibraryDocument,
+  setDocumentName,
+  setSourceError,
   startScan,
   sweepFailures,
   touchDocument,
   unseenDocuments,
+  updateScanProgress,
   writePages,
+  writeWorkerStatus,
 } from "./store";
 import type { SkipReason, SkipRecord } from "./walk";
 
@@ -120,6 +126,7 @@ export interface Progress {
   freeBytes: number | null;
   usedBytes: number | null;
   capBytes: number | null;
+  minFreeBytes: number | null;
   /** The limit currently pausing indexing, or null. */
   limit: Extract<LimitState, { ok: false }> | null;
   /** Pages finished in the last 60 s, with timestamps, for a rolling rate. */
@@ -131,6 +138,9 @@ const AWAITING_SCAN = "9999-12-31T00:00:00.000Z";
 const WRITE_CHUNK_PAGES = 25;
 
 class Disconnected extends Error {}
+
+/** A scan stopped because its source was paused or removed. */
+class ScanCancelled extends Error {}
 
 function isIoError(err: unknown): boolean {
   const code = String((err as { code?: unknown })?.code ?? "");
@@ -150,10 +160,33 @@ function skipKind(reason: SkipReason): FailureKind {
     case "not-downloaded":
     case "too-deep":
     case "not-a-pdf":
+    case "not-allowed":
       return reason;
     default:
       return "other";
   }
+}
+
+/** One source as the service sees it on each tick: what the registry says, and the source built from it. */
+export interface ServedSource {
+  id: string;
+  kind: LibrarySource["kind"];
+  name: string;
+  label: string;
+  state: "active" | "paused" | "removing";
+  rescanRequestedAt: string | null;
+  /** Null when the source can't be built (bad settings, a folder that moved...): `error` says why. */
+  source: LibrarySource | null;
+  error: string | null;
+}
+
+export interface ServeControl {
+  /** Called every poll: the sources that should exist right now. */
+  sync(): Promise<ServedSource[]> | ServedSource[];
+  /** The service started the scan an admin asked for. */
+  onRescanStarted?(id: string, requestedAt: string): void;
+  /** A removed source's index entries are all gone. */
+  onRemoved?(id: string): void;
 }
 
 export class LibraryIndexer {
@@ -162,13 +195,20 @@ export class LibraryIndexer {
   private readonly log: (line: string) => void;
   private readonly settings: string;
   private readonly limit: <T>(task: () => Promise<T>) => Promise<T>;
-  private readonly sourcesById: Map<string, LibrarySource>;
+  private sourcesById: Map<string, LibrarySource>;
+  /** Serving only: the sources whose jobs may be claimed (a paused source's wait). Null = all (a one-pass run). */
+  private activeIds: Set<string> | null = null;
+  private releasedBySource = new WeakSet<AbortController>();
+  private scanStates = new Map<string, { running: boolean; last: number; handledRequest: string | null }>();
+  private sweepPending = new Map<string, number>();
+  private lastErrors = new Map<string, string | null>();
+  private scanChain: Promise<void> = Promise.resolve();
   private readonly now: () => number;
   private paused: Promise<void> | null = null;
   private pausedFor: "disconnect" | "limit" | null = null;
   private stopped = false;
   private stopController = new AbortController();
-  private fileControllers = new Set<AbortController>();
+  private fileControllers = new Map<AbortController, string>();
   private scanCompleted = new Map<string, number>();
   readonly progress: Progress;
 
@@ -199,6 +239,7 @@ export class LibraryIndexer {
       freeBytes: null,
       usedBytes: null,
       capBytes: null,
+      minFreeBytes: null,
       limit: null,
       recentPages: [],
     };
@@ -260,7 +301,7 @@ export class LibraryIndexer {
     this.pausedFor = "disconnect";
     this.progress.state = "paused: library drive not connected";
     this.log("Library drive not connected. Stopped safely; waiting for it to come back…");
-    for (const c of this.fileControllers) c.abort();
+    for (const c of this.fileControllers.keys()) c.abort();
     this.paused = (async () => {
       this.closeQuietly();
       const back = await this.o.guard.waitForReconnect(this.stopController.signal, this.o.reconnectIntervalMs ?? 10_000);
@@ -295,6 +336,7 @@ export class LibraryIndexer {
     this.progress.usedBytes = state.usedBytes;
     this.progress.capBytes = state.capBytes;
     this.progress.freeBytes = state.freeBytes;
+    this.progress.minFreeBytes = state.minFreeBytes;
     if (!state.ok && !this.paused && !this.stopped) void this.onLimit(state);
     return state;
   }
@@ -314,7 +356,7 @@ export class LibraryIndexer {
     this.progress.state = limitStateLabel(first.kind);
     this.progress.limit = first;
     this.log(first.message);
-    for (const c of this.fileControllers) c.abort();
+    for (const c of this.fileControllers.keys()) c.abort();
     this.paused = (async () => {
       let lastReminder = this.now();
       for (;;) {
@@ -357,7 +399,7 @@ export class LibraryIndexer {
     this.stopped = true;
     this.progress.state = "stopping";
     this.stopController.abort();
-    for (const c of this.fileControllers) c.abort();
+    for (const c of this.fileControllers.keys()) c.abort();
   }
 
   // --- the run ---------------------------------------------------------------
@@ -397,6 +439,197 @@ export class LibraryIndexer {
     }
   }
 
+  // --- serving: a long-running service driven by the sources registry ---------
+
+  /**
+   * Runs until stop(): keeps the worker pool going, and every `pollMs` asks
+   * `control.sync()` which sources exist and in what state. A new source is
+   * scanned at once; Rescan scans now; otherwise each source is rescanned
+   * every `rescanMinutes`. Pause stops claiming that source's jobs and
+   * releases its in-flight files (their jobs go back to waiting); Resume
+   * picks them up again; Remove deletes that source's index entries (never
+   * the files or database behind it) in small batches between other work.
+   * The storage cap and the free-space reserve pause everything, as in a
+   * one-pass run.
+   */
+  async serve(control: ServeControl, options: { pollMs?: number } = {}): Promise<Progress> {
+    this.open();
+    const pollMs = options.pollMs ?? 2000;
+    try {
+      const redo = resetRunningJobs(this.requireDb());
+      if (redo > 0) this.log(`Resuming: ${redo} file(s) a previous run left half-done will be redone.`);
+      this.emptyTempDir();
+      this.activeIds = new Set();
+      this.progress.state = "running";
+
+      const spaceTimer = setInterval(() => void this.enforceLimits(), this.o.spaceCheckMs ?? 30_000);
+      const statusTimer = setInterval(() => this.publishStatus(), Math.min(2000, pollMs));
+      this.enforceLimits();
+      const workers = Array.from({ length: this.o.config.filesInFlight }, () => this.worker(() => false));
+      try {
+        while (!this.stopped) {
+          try {
+            await this.reconcile(control);
+          } catch (err) {
+            if (err instanceof Disconnected) await this.onDisconnect().catch((e) => this.log(String(e)));
+            else if (!this.stopped) this.log(`Couldn't check the sources: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          this.publishStatus();
+          await sleep(pollMs, this.stopController.signal);
+        }
+      } finally {
+        clearInterval(spaceTimer);
+        clearInterval(statusTimer);
+      }
+      await Promise.all(workers);
+      await this.scanChain.catch(() => {});
+      this.publishStatus("stopped");
+      return this.progress;
+    } finally {
+      this.closeQuietly();
+    }
+  }
+
+  private async reconcile(control: ServeControl): Promise<void> {
+    const served = await control.sync();
+    const db = this.requireDb();
+    const nextActive = new Set<string>();
+    const sources = new Map<string, LibrarySource>();
+
+    for (const s of served) {
+      registerSource(db, { id: s.id, kind: s.kind, label: s.label, name: s.name });
+      if (this.lastErrors.get(s.id) !== s.error) {
+        setSourceError(db, s.id, s.error);
+        this.lastErrors.set(s.id, s.error);
+        if (s.error) this.log(`${s.name}: ${s.error}`);
+      }
+      if (s.source) sources.set(s.id, s.source);
+      if (s.state === "active" && s.source) nextActive.add(s.id);
+    }
+    for (const id of this.activeIds ?? []) if (!nextActive.has(id)) this.releaseSource(id);
+    this.activeIds = nextActive;
+    this.sourcesById = sources;
+
+    for (const s of served) {
+      if (s.state === "removing") await this.removalStep(s.id, control);
+    }
+
+    for (const s of served) {
+      if (!nextActive.has(s.id) || !s.source) continue;
+      const st = this.scanStates.get(s.id) ?? { running: false, last: 0, handledRequest: null };
+      this.scanStates.set(s.id, st);
+      const requested = s.rescanRequestedAt !== null && s.rescanRequestedAt !== st.handledRequest;
+      const due = st.last === 0 || this.now() - st.last >= this.o.config.rescanMinutes * 60_000;
+      if (st.running || (!requested && !due)) continue;
+      st.running = true;
+      if (requested) {
+        st.handledRequest = s.rescanRequestedAt;
+        control.onRescanStarted?.(s.id, s.rescanRequestedAt!);
+      }
+      const source = s.source;
+      this.scanChain = this.scanChain
+        .then(async () => {
+          if (this.stopped || !this.activeIds?.has(source.id)) return;
+          this.progress.scanning = true;
+          try {
+            await this.scanSource(source);
+            const scanId = this.scanCompleted.get(source.id);
+            if (scanId !== undefined) {
+              this.scanCompleted.delete(source.id);
+              this.sweepPending.set(source.id, scanId);
+            }
+          } finally {
+            this.progress.scanning = false;
+          }
+        })
+        .catch((err) => {
+          if (!this.stopped) this.log(`Scan of ${source.label} failed: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => {
+          st.running = false;
+          st.last = this.now();
+        });
+    }
+
+    // Deleted files are swept once the source's queue has drained, so a
+    // renamed file is recognised as a rename rather than a delete plus an add.
+    for (const [sourceId, scanId] of this.sweepPending) {
+      if (!this.activeIds.has(sourceId)) {
+        this.sweepPending.delete(sourceId);
+        continue;
+      }
+      const left = db.prepare("SELECT count(*) FROM jobs WHERE source_id = ?").pluck().get(sourceId) as number;
+      if (left === 0 && !this.scanStates.get(sourceId)?.running) {
+        this.sweepPending.delete(sourceId);
+        this.write(() => this.sweepOne(sourceId, scanId));
+      }
+    }
+  }
+
+  /** Stops claiming and abandons the in-flight files of one source (their jobs go back to waiting). */
+  private releaseSource(sourceId: string): void {
+    for (const [controller, id] of this.fileControllers) {
+      if (id !== sourceId) continue;
+      this.releasedBySource.add(controller);
+      controller.abort();
+    }
+  }
+
+  /** One slice of removing a source: waits for its scan and in-flight files to stop, then deletes its index entries in batches. */
+  private async removalStep(sourceId: string, control: ServeControl): Promise<void> {
+    this.releaseSource(sourceId);
+    this.sweepPending.delete(sourceId);
+    if (this.scanStates.get(sourceId)?.running) return;
+    if ([...this.fileControllers.values()].includes(sourceId)) return;
+    const db = this.requireDb();
+    db.prepare("DELETE FROM jobs WHERE source_id = ?").run(sourceId);
+    const started = this.now();
+    let left = 1;
+    while (left > 0 && this.now() - started < 1500 && !this.stopped) {
+      // Cached OCR text for these files goes with them -- unless another document uses the same content.
+      const shas = db.prepare("SELECT DISTINCT sha256 FROM documents WHERE source_id = ? AND sha256 IS NOT NULL LIMIT 100").pluck().all(sourceId) as string[];
+      left = this.write((w) => removeSourceContent(w, sourceId, 100));
+      for (const sha of shas) {
+        const stillUsed = db.prepare("SELECT 1 FROM documents WHERE sha256 = ? LIMIT 1").get(sha) !== undefined;
+        if (!stillUsed) this.ocrCache?.deleteForFile(sha);
+      }
+    }
+    // Hand the freed pages back to the disk, so the space counts as free again.
+    db.pragma("incremental_vacuum(20000)");
+    db.pragma("wal_checkpoint(PASSIVE)");
+    if (left > 0) return;
+    this.write((w) => dropSource(w, sourceId));
+    db.pragma("incremental_vacuum");
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    this.scanStates.delete(sourceId);
+    this.lastErrors.delete(sourceId);
+    this.log(`Removed source ${sourceId} (its index entries; the original files were not touched).`);
+    control.onRemoved?.(sourceId);
+  }
+
+  /** The service's status line for the app: heartbeat, state, storage numbers. Best effort. */
+  private publishStatus(override?: string): void {
+    try {
+      const l = this.progress.limit;
+      writeWorkerStatus(this.requireDb(), {
+        pid: process.pid,
+        heartbeatAt: new Date().toISOString(),
+        state: override ?? this.progress.state,
+        scanning: this.progress.scanning,
+        limit: l ? { kind: l.kind, message: l.message } : null,
+        usedBytes: this.progress.usedBytes,
+        capBytes: this.progress.capBytes,
+        freeBytes: this.progress.freeBytes,
+        minFreeBytes: this.progress.minFreeBytes,
+        filesIndexed: this.progress.filesIndexed,
+        pagesDone: this.progress.pagesDone,
+        ocrRun: this.progress.ocrRun,
+      });
+    } catch {
+      // The drive may be gone, or we are stopping; the next tick tries again.
+    }
+  }
+
   private emptyTempDir(): void {
     fs.mkdirSync(this.paths.tmp, { recursive: true });
     for (const name of fs.readdirSync(this.paths.tmp)) {
@@ -430,8 +663,29 @@ export class LibraryIndexer {
     }
   }
 
+  /**
+   * Like checkpoint(), for a scan: waits out a pause, but gives up (so the
+   * scan can be abandoned) the moment its own source is paused or removed --
+   * otherwise removing a source during a storage-limit pause, which is the
+   * way to free space, would wait forever for a scan that can't move.
+   */
+  private async checkpointFor(sourceId: string): Promise<void> {
+    const cancelled = () => this.activeIds !== null && !this.activeIds.has(sourceId);
+    while (this.paused) {
+      if (cancelled()) throw new ScanCancelled("source paused or removed");
+      await Promise.race([this.paused.catch(() => {}), sleep(100, this.stopController.signal)]);
+    }
+    if (this.stopped) throw new Error("stopping");
+    if (cancelled()) throw new ScanCancelled("source paused or removed");
+  }
+
   private async scanSource(source: LibrarySource): Promise<void> {
-    await this.checkpoint();
+    try {
+      await this.checkpointFor(source.id);
+    } catch (err) {
+      if (err instanceof ScanCancelled || this.stopped) return;
+      throw err;
+    }
     const scanId = this.write((db) => startScan(db, source.id));
     const hadDocuments = this.write(
       (db) => db.prepare("SELECT 1 FROM documents WHERE source_id = ? LIMIT 1").get(source.id) !== undefined
@@ -460,7 +714,7 @@ export class LibraryIndexer {
     };
 
     const flush = async () => {
-      await this.checkpoint();
+      await this.checkpointFor(source.id);
       if (skips.length > 0) {
         const pending = skips.splice(0);
         this.write((db) =>
@@ -489,6 +743,7 @@ export class LibraryIndexer {
         const failed = knownFailures(db, source.id, keys);
         const jobs: NewJob[] = [];
         const seen: string[] = [];
+        const renames: Array<{ id: number; name: string }> = [];
         const failuresSeen: string[] = [];
         for (const e of entries) {
           const doc = known.get(e.key);
@@ -498,7 +753,11 @@ export class LibraryIndexer {
           if (doc) {
             seen.push(e.key);
             const settled = doc.settings === this.settings;
-            if (unchanged(doc) && settled && (doc.status === "ready" || (doc.status === "failed" && !this.o.retryFailed))) continue;
+            if (unchanged(doc) && settled && (doc.status === "ready" || (doc.status === "failed" && !this.o.retryFailed))) {
+              // Same content, new name (a rename in Google Drive, say): just the name.
+              if (doc.displayName !== e.displayName) renames.push({ id: doc.id, name: e.displayName });
+              continue;
+            }
           } else if (failure && unchanged(failure) && !this.o.retryFailed) {
             failuresSeen.push(e.key);
             continue;
@@ -522,9 +781,11 @@ export class LibraryIndexer {
         db.transaction(() => {
           markSeen(db, source.id, seen, scanId);
           markFailuresSeen(db, source.id, failuresSeen, scanId);
+          for (const r of renames) setDocumentName(db, r.id, r.name);
           enqueueJobs(db, jobs);
         })();
         stats.queued += jobs.length;
+        updateScanProgress(db, scanId, stats);
       });
     };
 
@@ -554,11 +815,20 @@ export class LibraryIndexer {
       if (err instanceof Disconnected) {
         abortedReason = "library drive disconnected";
         await this.onDisconnect().catch(() => {});
+      } else if (err instanceof ScanCancelled) {
+        abortedReason = "cancelled";
       } else if (this.stopped) {
         abortedReason = "stopped";
       } else {
         abortedReason = err instanceof Error ? err.message : String(err);
         this.log(`Scan of ${source.label} failed: ${abortedReason}`);
+        // Shown on the source ("Error: ...") until a scan next succeeds.
+        try {
+          this.write((db) => setSourceError(db, source.id, abortedReason!));
+          this.lastErrors.set(source.id, abortedReason!);
+        } catch {
+          // the index is going away; the next scan says it again
+        }
       }
     }
 
@@ -573,7 +843,17 @@ export class LibraryIndexer {
     } catch {
       // stopping or disconnected; the next run rescans
     }
-    if (completed && !sample) this.scanCompleted.set(source.id, scanId);
+    if (completed && !sample) {
+      this.scanCompleted.set(source.id, scanId);
+      if (this.lastErrors.get(source.id)) {
+        try {
+          this.write((db) => setSourceError(db, source.id, null));
+          this.lastErrors.set(source.id, null);
+        } catch {
+          // as above
+        }
+      }
+    }
     // Directories that couldn't be read this time: don't treat what's in them as deleted.
     this.skippedDirsBySource.set(source.id, skippedDirs.length > 10_000 ? null : skippedDirs);
     if (sample) this.log(`Sample mode: indexing a random ${reservoir.length} of ${stats.filesSeen} PDFs (seed ${this.o.config.sampleSeed}); deletions aren't swept in sample mode.`);
@@ -583,29 +863,31 @@ export class LibraryIndexer {
 
   /** After a completed scan and an empty queue: documents not seen are files that are gone. */
   private async sweep(): Promise<void> {
-    for (const [sourceId, scanId] of this.scanCompleted) {
-      const skippedDirs = this.skippedDirsBySource.get(sourceId);
-      if (skippedDirs === null) {
-        this.log(`Not removing anything for ${sourceId}: over 10,000 folders were unreadable this scan.`);
-        continue;
-      }
-      const under = (key: string) => (skippedDirs ?? []).some((d) => key.startsWith(`${d}/`));
-      let removed = 0;
-      for (;;) {
-        const ids = this.write((db) => unseenDocuments(db, sourceId, scanId, 500));
-        const toDelete = this.write((db) =>
-          ids.filter((id) => !under(String(db.prepare("SELECT key FROM documents WHERE id = ?").pluck().get(id))))
-        );
-        if (toDelete.length === 0) break;
-        this.write((db) => db.transaction(() => toDelete.forEach((id) => deleteLibraryDocument(db, id)))());
-        removed += toDelete.length;
-        if (toDelete.length < ids.length) break;
-      }
-      this.write((db) => sweepFailures(db, sourceId, scanId));
-      if (removed > 0) {
-        this.progress.filesDeleted += removed;
-        this.log(`Removed ${removed} document(s) no longer in ${this.sourcesById.get(sourceId)?.label ?? sourceId}.`);
-      }
+    for (const [sourceId, scanId] of this.scanCompleted) this.sweepOne(sourceId, scanId);
+  }
+
+  private sweepOne(sourceId: string, scanId: number): void {
+    const skippedDirs = this.skippedDirsBySource.get(sourceId);
+    if (skippedDirs === null) {
+      this.log(`Not removing anything for ${sourceId}: over 10,000 folders were unreadable this scan.`);
+      return;
+    }
+    const under = (key: string) => (skippedDirs ?? []).some((d) => key.startsWith(`${d}/`));
+    let removed = 0;
+    for (;;) {
+      const ids = this.write((db) => unseenDocuments(db, sourceId, scanId, 500));
+      const toDelete = this.write((db) =>
+        ids.filter((id) => !under(String(db.prepare("SELECT key FROM documents WHERE id = ?").pluck().get(id))))
+      );
+      if (toDelete.length === 0) break;
+      this.write((db) => db.transaction(() => toDelete.forEach((id) => deleteLibraryDocument(db, id)))());
+      removed += toDelete.length;
+      if (toDelete.length < ids.length) break;
+    }
+    this.write((db) => sweepFailures(db, sourceId, scanId));
+    if (removed > 0) {
+      this.progress.filesDeleted += removed;
+      this.log(`Removed ${removed} document(s) no longer in ${this.sourcesById.get(sourceId)?.label ?? sourceId}.`);
     }
   }
 
@@ -636,7 +918,7 @@ export class LibraryIndexer {
           await this.checkpoint(); // waits out the pause (or throws if stopping)
           continue;
         }
-        job = this.write((db) => claimJobs(db, 1)[0]);
+        job = this.write((db) => claimJobs(db, 1, undefined, this.activeIds ? [...this.activeIds] : undefined)[0]);
       } catch (err) {
         if (this.stopped) return;
         if (err instanceof Disconnected) {
@@ -691,7 +973,7 @@ export class LibraryIndexer {
     }
 
     const controller = new AbortController();
-    this.fileControllers.add(controller);
+    this.fileControllers.set(controller, job.sourceId);
     // Waits out a pause -- but a file a pause released (its controller was
     // aborted) must not carry on afterwards holding its temp files: it stops
     // here, cleans up, and is redone when the pause ends.
@@ -837,6 +1119,16 @@ export class LibraryIndexer {
       this.progress.filesIndexed++;
     } catch (err) {
       if (this.stopped) return; // not an outcome: redone next run
+      if (this.releasedBySource.has(controller)) {
+        // The source was paused (or is being removed): put the job back so it
+        // waits for Resume instead of staying 'running'.
+        try {
+          this.write((db) => db.prepare("UPDATE jobs SET state = 'pending', updated_at = ? WHERE id = ? AND state = 'running'").run(new Date().toISOString(), job.id));
+        } catch {
+          // the index is going away; a restart resets running jobs anyway
+        }
+        return;
+      }
       if (controller.signal.aborted) {
         // Released by a pause (a storage limit, or the drive going away): not
         // an outcome. The job stays 'running' and is redone when the pause

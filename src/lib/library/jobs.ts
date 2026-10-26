@@ -59,17 +59,23 @@ export function enqueueJobs(db: Database.Database, jobs: NewJob[]): void {
   })();
 }
 
-/** Claims up to `limit` ready jobs, oldest first, marking them running. */
-export function claimJobs(db: Database.Database, limit: number, nowIso = now()): Job[] {
+/**
+ * Claims up to `limit` ready jobs, oldest first, marking them running.
+ * `sourceIds` limits the claim to those sources (the ones that are active:
+ * a paused source's jobs wait); omitted means every source.
+ */
+export function claimJobs(db: Database.Database, limit: number, nowIso = now(), sourceIds?: string[]): Job[] {
+  if (sourceIds && sourceIds.length === 0) return [];
   return db.transaction(() => {
+    const filter = sourceIds ? ` AND source_id IN (${sourceIds.map(() => "?").join(",")})` : "";
     const rows = db
       .prepare(
         `SELECT id, source_id AS sourceId, key, locator, display_name AS displayName, action, size_bytes AS sizeBytes,
                 modified_at AS modifiedAt, scan_id AS scanId, attempts
-         FROM jobs WHERE state = 'pending' AND (not_before IS NULL OR not_before <= ?)
+         FROM jobs WHERE state = 'pending' AND (not_before IS NULL OR not_before <= ?)${filter}
          ORDER BY id LIMIT ?`
       )
-      .all(nowIso, limit) as Job[];
+      .all(nowIso, ...(sourceIds ?? []), limit) as Job[];
     const mark = db.prepare("UPDATE jobs SET state = 'running', attempts = attempts + 1, requeue = 0, updated_at = ? WHERE id = ?");
     for (const row of rows) mark.run(nowIso, row.id);
     return rows.map((r) => ({ ...r, attempts: r.attempts + 1 }));

@@ -23,8 +23,17 @@ import {
 
 export function openLibraryDb(file: string): Database.Database {
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  const isNew = !fs.existsSync(file);
   const db = new Database(file);
+  // Incremental auto-vacuum, so removing a source gives its space back to the
+  // disk (and so back under the storage cap) without rewriting the whole
+  // index. It has to be set before the first table exists; a file made
+  // without it (before this setting) is converted once, if it's small enough
+  // for a VACUUM to be sensible.
+  if (isNew) db.pragma("auto_vacuum = INCREMENTAL");
   db.pragma("journal_mode = WAL");
+  // Never let the WAL balloon between checkpoints: it counts against the cap.
+  db.pragma("journal_size_limit = 67108864");
   // FULL + fullfsync: on macOS a plain fsync doesn't force the drive to
   // write its cache, and the drive being pulled mid-run is a case this is
   // built to survive.
@@ -32,6 +41,10 @@ export function openLibraryDb(file: string): Database.Database {
   db.pragma("fullfsync = ON");
   db.pragma("busy_timeout = 5000");
   db.exec(LIBRARY_SCHEMA_SQL);
+  if (!isNew && db.pragma("auto_vacuum", { simple: true }) === 0 && fs.statSync(file).size < 1024 ** 3) {
+    db.pragma("auto_vacuum = INCREMENTAL");
+    db.exec("VACUUM");
+  }
   const version = db.prepare("SELECT value FROM meta WHERE key = 'library_schema_version'").pluck().get();
   if (version === undefined) {
     db.transaction(() => {
@@ -59,6 +72,7 @@ function migrateV1ToV2(db: Database.Database): void {
     const columns = (db.prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>).map((c) => c.name);
     if (!columns.includes("ordinal")) db.exec("ALTER TABLE sources ADD COLUMN ordinal INTEGER");
     if (!columns.includes("name")) db.exec("ALTER TABLE sources ADD COLUMN name TEXT");
+    if (!columns.includes("last_error")) db.exec("ALTER TABLE sources ADD COLUMN last_error TEXT");
     db.exec("UPDATE sources SET ordinal = 0 WHERE ordinal IS NULL");
     db.exec("UPDATE sources SET name = kind WHERE name IS NULL");
     db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('next_ordinal', '1')").run();
@@ -163,6 +177,29 @@ export function startScan(db: Database.Database, sourceId: string): number {
   return Number(db.prepare("INSERT INTO scans (source_id, started_at) VALUES (?, ?)").run(sourceId, now()).lastInsertRowid);
 }
 
+/** Live counts while a scan is running, so the Sources page can say "8,311 PDFs found so far". */
+export function updateScanProgress(db: Database.Database, scanId: number, stats: { filesSeen: number; queued: number; skipped: number; others: number }): void {
+  db.prepare("UPDATE scans SET files_seen = ?, queued = ?, skipped = ?, others = ? WHERE id = ?").run(stats.filesSeen, stats.queued, stats.skipped, stats.others, scanId);
+}
+
+/** A file whose content is unchanged but whose name moved (a rename in Google Drive, say): just the name. */
+export function setDocumentName(db: Database.Database, docId: number, displayName: string): void {
+  db.prepare("UPDATE documents SET display_name = ? WHERE id = ?").run(displayName, docId);
+  bumpGeneration(db);
+}
+
+export function setSourceError(db: Database.Database, sourceId: string, error: string | null): void {
+  db.prepare("UPDATE sources SET last_error = ? WHERE id = ?").run(error, sourceId);
+}
+
+/** The worker's own status line, read by the app: heartbeat, state, limits. */
+export function writeWorkerStatus(db: Database.Database, status: object): void {
+  db.prepare(
+    `INSERT INTO meta (key, value) VALUES ('worker_status', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(JSON.stringify(status));
+}
+
 export function finishScan(
   db: Database.Database,
   scanId: number,
@@ -180,6 +217,7 @@ export function finishScan(
 export interface KnownDocument {
   id: number;
   key: string;
+  displayName: string;
   sizeBytes: number | null;
   modifiedAt: string | null;
   sha256: string | null;
@@ -192,7 +230,7 @@ export interface KnownDocument {
 export function knownDocuments(db: Database.Database, sourceId: string, keys: string[]): Map<string, KnownDocument> {
   const out = new Map<string, KnownDocument>();
   const stmt = db.prepare(
-    `SELECT id, key, size_bytes AS sizeBytes, modified_at AS modifiedAt, sha256, status, settings, last_seen_scan AS lastSeenScan
+    `SELECT id, key, display_name AS displayName, size_bytes AS sizeBytes, modified_at AS modifiedAt, sha256, status, settings, last_seen_scan AS lastSeenScan
      FROM documents WHERE source_id = ? AND key = ?`
   );
   for (const key of keys) {

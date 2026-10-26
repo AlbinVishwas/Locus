@@ -106,7 +106,7 @@ function toSource(r: Row): RegistrySource {
 }
 
 export function listRegistry(db: Database.Database): RegistrySource[] {
-  return (db.prepare("SELECT * FROM sources ORDER BY created_at, id").all() as Row[]).map(toSource);
+  return (db.prepare("SELECT * FROM sources ORDER BY rowid").all() as Row[]).map(toSource);
 }
 
 export function getRegistrySource(db: Database.Database, id: string): RegistrySource | null {

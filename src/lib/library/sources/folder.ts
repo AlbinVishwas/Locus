@@ -11,6 +11,9 @@ import type { LibrarySource, OpenedFile, SourceEntry } from "./types";
  */
 
 export interface FolderSourceOptions {
+  /** The registry id, when this source comes from the Sources page (otherwise derived from the folder). */
+  id?: string;
+  name?: string;
   include: string[];
   exclude: string[];
   crossDevice: boolean;
@@ -31,9 +34,9 @@ export class FolderSource implements LibrarySource {
     private readonly options: FolderSourceOptions
   ) {
     this.root = fs.realpathSync(root);
-    this.id = `folder:${createHash("sha1").update(this.root).digest("hex").slice(0, 16)}`;
+    this.id = options.id ?? `folder:${createHash("sha1").update(this.root).digest("hex").slice(0, 16)}`;
     this.label = `folder ${this.root}`;
-    this.name = path.basename(this.root) || "Folder";
+    this.name = options.name ?? (path.basename(this.root) || "Folder");
   }
 
   async *scan(signal: AbortSignal, onSkip: (skip: SkipRecord) => void, onOther?: () => void): AsyncIterable<SourceEntry> {

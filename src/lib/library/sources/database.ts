@@ -29,6 +29,11 @@ import { SourceFileError, type LibrarySource, type OpenedFile, type SourceEntry 
 export const CHUNK_BYTES = 8 * 1024 * 1024;
 
 export interface DatabaseSourceOptions {
+  /** The registry id, when this source comes from the Sources page (otherwise derived from the URL and query). */
+  id?: string;
+  name?: string;
+  /** A file_path value must pass this (inside the allowed roots) or the row is skipped. */
+  pathAllowed?: (p: string) => boolean;
   batchSize: number;
   maxFileBytes: number;
   settleSeconds: number;
@@ -41,29 +46,35 @@ export class DatabaseSource implements LibrarySource {
   readonly kind = "database" as const;
   readonly id: string;
   readonly label: string;
-  readonly name = "Database";
+  readonly name: string;
+  // The connection URL carries the password. A #private field is not an
+  // enumerable property, so JSON.stringify, a console.log or a debugger
+  // dump of this object cannot reveal it; it exists only to connect.
+  readonly #url: string;
   private conn: DbConnection | null = null;
   private content: ContentColumn | null = null;
 
   constructor(
-    private readonly url: string,
+    url: string,
     private readonly query: string,
     private readonly options: DatabaseSourceOptions
   ) {
     parseDbUrl(url);
+    this.#url = url;
     const redacted = redactUrl(url);
-    this.id = `db:${createHash("sha1").update(`${redacted.replace(":***@", "@")}\n${query}`).digest("hex").slice(0, 16)}`;
+    this.id = options.id ?? `db:${createHash("sha1").update(`${redacted.replace(":***@", "@")}\n${query}`).digest("hex").slice(0, 16)}`;
+    this.name = options.name ?? "Database";
     this.label = `database ${redacted}`;
   }
 
   private async connection(): Promise<{ conn: DbConnection; content: ContentColumn }> {
     if (!this.conn) {
-      const conn = await (this.options.connect ?? connectReadOnly)(this.url);
+      const conn = await (this.options.connect ?? connectReadOnly)(this.#url);
       try {
         this.content = contentColumnOf(await conn.columns(columnsSql(this.query)));
       } catch (err) {
         await conn.close();
-        throw new Error(redactSecrets(err instanceof Error ? err.message : String(err), this.url));
+        throw new Error(redactSecrets(err instanceof Error ? err.message : String(err), this.#url));
       }
       this.conn = conn;
     }
@@ -79,7 +90,7 @@ export class DatabaseSource implements LibrarySource {
       try {
         rows = await conn.all(sql, lastId !== undefined ? [lastId] : []);
       } catch (err) {
-        throw new Error(`LIBRARY_DB_QUERY failed: ${redactSecrets(err instanceof Error ? err.message : String(err), this.url)}`);
+        throw new Error(`LIBRARY_DB_QUERY failed: ${redactSecrets(err instanceof Error ? err.message : String(err), this.#url)}`);
       }
       if (rows.length === 0) return;
       for (const row of rows) {
@@ -90,6 +101,10 @@ export class DatabaseSource implements LibrarySource {
         let locator: string;
         if (content === "file_path") {
           locator = String(row.file_path ?? "");
+          if (this.options.pathAllowed && !this.options.pathAllowed(locator)) {
+            onSkip({ relPath: displayName, reason: "not-allowed", isDirectory: false, detail: "the file's location isn't inside an allowed folder" });
+            continue;
+          }
           try {
             sizeBytes = fs.statSync(locator).size;
           } catch {
@@ -113,6 +128,9 @@ export class DatabaseSource implements LibrarySource {
   async open(entry: SourceEntry, tempDir: string, signal: AbortSignal): Promise<OpenedFile> {
     const { conn, content } = await this.connection();
     if (content === "file_path") {
+      if (this.options.pathAllowed && !this.options.pathAllowed(entry.locator)) {
+        throw new SourceFileError("not-allowed", "the file's location isn't inside an allowed folder");
+      }
       // Read in place, exactly like a folder source. The database's
       // modified_at is the change signal, so no settle wait on the file.
       return openLocalPdf(entry.locator, { maxFileBytes: this.options.maxFileBytes, settleMs: 0, signal });
@@ -132,7 +150,7 @@ export class DatabaseSource implements LibrarySource {
         try {
           rows = await conn.all(sql, [offset, chunkBytes, entry.key]);
         } catch (err) {
-          throw new SourceFileError("unreadable", redactSecrets(err instanceof Error ? err.message : String(err), this.url));
+          throw new SourceFileError("unreadable", redactSecrets(err instanceof Error ? err.message : String(err), this.#url));
         }
         if (rows.length === 0) throw new SourceFileError("vanished", "row no longer returned by LIBRARY_DB_QUERY");
         const raw = rows[0].chunk;

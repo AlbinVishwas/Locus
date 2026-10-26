@@ -92,6 +92,7 @@ export type FailureKind =
   | "path-too-long"
   | "unreadable-filename"
   | "not-downloaded"
+  | "not-allowed"
   | "symlink"
   | "directory-cycle"
   | "other-device"
@@ -114,7 +115,9 @@ CREATE TABLE IF NOT EXISTS sources (
   -- This source's document-id range (see DOC_SEQ_BITS). Never reused.
   ordinal   INTEGER,
   -- What people see in the scope dropdown and on hits. Never a path.
-  name      TEXT
+  name      TEXT,
+  -- Why the source can't be scanned right now (bad settings, folder gone...), or NULL.
+  last_error TEXT
 );
 
 CREATE TABLE IF NOT EXISTS documents (
