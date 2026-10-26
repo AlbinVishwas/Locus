@@ -141,7 +141,11 @@ function allowedRootsFrom(env: Env): string[] {
   for (const r of roots) {
     if (!path.isAbsolute(r)) throw new Error(`LOCUS_ALLOWED_ROOTS entries must be absolute paths, got "${r}"`);
   }
-  return roots.map((r) => path.resolve(r));
+  const resolved = roots.map((r) => path.resolve(r));
+  if (resolved.some((r) => r === path.parse(r).root)) {
+    throw new Error('LOCUS_ALLOWED_ROOTS can\'t include "/" itself: that would allow every folder on this Mac.');
+  }
+  return resolved;
 }
 
 /** LOCUS_MIN_FREE_GB, or its earlier name LIBRARY_MIN_FREE_GB (with a one-time deprecation warning). */

@@ -16,6 +16,7 @@ export class UploadSource implements LibrarySource {
   readonly kind = "upload" as const;
   readonly id: string;
   readonly label: string;
+  readonly name = "Session uploads";
 
   constructor(
     private readonly db: Database.Database,

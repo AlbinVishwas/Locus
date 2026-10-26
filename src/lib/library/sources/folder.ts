@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { walk, type SkipRecord } from "../walk";
 import { isDataless, openLocalPdf } from "./localFile";
 import type { LibrarySource, OpenedFile, SourceEntry } from "./types";
@@ -22,6 +23,7 @@ export class FolderSource implements LibrarySource {
   readonly kind = "folder" as const;
   readonly id: string;
   readonly label: string;
+  readonly name: string;
   private readonly root: string;
 
   constructor(
@@ -31,6 +33,7 @@ export class FolderSource implements LibrarySource {
     this.root = fs.realpathSync(root);
     this.id = `folder:${createHash("sha1").update(this.root).digest("hex").slice(0, 16)}`;
     this.label = `folder ${this.root}`;
+    this.name = path.basename(this.root) || "Folder";
   }
 
   async *scan(signal: AbortSignal, onSkip: (skip: SkipRecord) => void, onOther?: () => void): AsyncIterable<SourceEntry> {

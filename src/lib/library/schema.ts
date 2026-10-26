@@ -26,10 +26,38 @@ import type { PageSource, TextKind } from "../search/schema";
  * writing its result commit in one transaction, which two separate SQLite
  * files can't do.
  */
-export const LIBRARY_SCHEMA_VERSION = 1;
+export const LIBRARY_SCHEMA_VERSION = 2;
+
+/**
+ * Each source owns a range of document ids: docId = ordinal * 2^24 + sequence
+ * (16.7M documents per source, ordinals 0-255, so ids stay below 2^32 and
+ * text ids below 2^53). "Search one source" is then just a rowid range on
+ * the full-text index -- no join, no second index file -- and rowid order is
+ * still source, then document, then page, so cursor paging is unchanged.
+ * Ordinal 0 is for documents indexed before schema v2 (and any source that
+ * was never given an ordinal).
+ */
+export const DOC_SEQ_BITS = 24;
+export const MAX_DOC_SEQ = 2 ** DOC_SEQ_BITS - 1;
+export const MAX_SOURCE_ORDINAL = 255;
 
 export const PAGE_BITS = 21;
 const PAGE_FACTOR = 2 ** PAGE_BITS;
+
+/** The [first, last] document ids a source's ordinal owns. */
+export function docIdRange(ordinal: number): [number, number] {
+  return [ordinal * 2 ** DOC_SEQ_BITS, (ordinal + 1) * 2 ** DOC_SEQ_BITS - 1];
+}
+
+/** The [first, last] text ids (full-text rowids) of everything a source's ordinal owns. */
+export function sourceTextIdRange(ordinal: number): [number, number] {
+  const [lo, hi] = docIdRange(ordinal);
+  return [lo * PAGE_FACTOR, (hi + 1) * PAGE_FACTOR - 1];
+}
+
+export function ordinalOfDocId(docId: number): number {
+  return Math.floor(docId / 2 ** DOC_SEQ_BITS);
+}
 /** Highest page number a document can have (2^20 - 1). */
 export const MAX_PAGE_NO = PAGE_FACTOR / 2 - 1;
 
@@ -82,7 +110,11 @@ CREATE TABLE IF NOT EXISTS sources (
   id        TEXT PRIMARY KEY,
   kind      TEXT NOT NULL,
   label     TEXT NOT NULL,
-  added_at  TEXT NOT NULL
+  added_at  TEXT NOT NULL,
+  -- This source's document-id range (see DOC_SEQ_BITS). Never reused.
+  ordinal   INTEGER,
+  -- What people see in the scope dropdown and on hits. Never a path.
+  name      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS documents (

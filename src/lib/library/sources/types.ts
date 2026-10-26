@@ -38,6 +38,8 @@ export interface LibrarySource {
   readonly kind: "folder" | "database" | "upload";
   /** For status and logs. Never contains credentials or absolute paths a browser could see. */
   readonly label: string;
+  /** What people see for this source (the scope dropdown, hits). Never a path. */
+  readonly name?: string;
   /** Streams entries with constant memory. Problems go to `onSkip`; the scan carries on. */
   scan(signal: AbortSignal, onSkip: (skip: SkipRecord) => void, onOther?: () => void): AsyncIterable<SourceEntry>;
   open(entry: SourceEntry, tempDir: string, signal: AbortSignal): Promise<OpenedFile>;

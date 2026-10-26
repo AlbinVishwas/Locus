@@ -41,6 +41,7 @@ export class DatabaseSource implements LibrarySource {
   readonly kind = "database" as const;
   readonly id: string;
   readonly label: string;
+  readonly name = "Database";
   private conn: DbConnection | null = null;
   private content: ContentColumn | null = null;
 

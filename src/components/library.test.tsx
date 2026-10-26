@@ -17,6 +17,9 @@ function result(overrides: Partial<LibrarySearchResult> = {}): LibrarySearchResu
     hits: [
       {
         docId: 1,
+        sourceId: "folder:a",
+        sourceName: "Tenders 2026",
+        sourceKind: "folder",
         displayName: "Tenders/2026/notice.pdf",
         stillIndexing: false,
         pageNo: 3,
@@ -28,6 +31,9 @@ function result(overrides: Partial<LibrarySearchResult> = {}): LibrarySearchResu
       },
       {
         docId: 2,
+        sourceId: "db:b",
+        sourceName: "Purchase records",
+        sourceKind: "database",
         displayName: "db:42 · scan.pdf",
         stillIndexing: true,
         pageNo: 1,
