@@ -70,7 +70,7 @@ export default function FolderBrowser({ start, onPick, onClose }: { start: strin
               </li>
             )}
             {data.entries.length === 0 && (
-              <li className="px-2.5 py-2 text-[13px] text-secondary">{data.path === null ? "No allowed locations are available. Is the drive connected?" : "No folders here."}</li>
+              <li className="px-2.5 py-2 text-[13px] text-secondary">{data.path === null ? "Nothing is available to choose from yet. A drive may not be connected, or the administrator needs to allow a location." : "No folders here."}</li>
             )}
             {data.entries.map((e) => (
               <li key={e.path}>

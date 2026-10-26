@@ -18,7 +18,7 @@ const MOBILE_QUERY = "(max-width: 767px)";
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const router = useRouter();
-  const { chatEnabled, usersEnabled, username, isAdmin, libraryEnabled } = useFeatures();
+  const { chatEnabled, usersEnabled, username, isAdmin, libraryEnabled, userSources } = useFeatures();
   const {
     conversations,
     activeConversationId,
@@ -123,6 +123,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               <AdminLink href="/activity">Activity</AdminLink>
             </div>
           )}
+          {!isAdmin && userSources && <AdminLink href="/sources">My folders</AdminLink>}
           {usersEnabled && username && !isAdmin && <AdminLink href="/account">Change password</AdminLink>}
           {usersEnabled && username && (
             <p className="truncate px-2.5 pb-1 text-[12px] text-secondary">Signed in as {username}</p>

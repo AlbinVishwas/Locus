@@ -7,7 +7,7 @@ import { FeaturesProvider, type ClientFeatures } from "@/components/FeaturesProv
 import { isChatEnabled } from "@/config/features";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { userFromToken } from "@/lib/session";
-import { adminEnabled, usersEnabled } from "@/lib/users/mode";
+import { adminEnabled, userSourcesEnabled, usersEnabled } from "@/lib/users/mode";
 import { isLibraryEnabled, searchScope, type SearchScope } from "@/lib/library/config";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 
@@ -46,8 +46,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   const user = users ? await userFromToken((await cookies()).get(SESSION_COOKIE)?.value) : null;
   const isAdmin = user?.role === "admin" && adminEnabled();
   // The library is the administrator's: with named accounts, everyone else gets the plain
-  // "search your own uploads" app.
-  const libraryEnabled = isLibraryEnabled() && (!users || isAdmin);
+  // "search your own uploads" app -- unless they may add their own folders (LOCUS_USER_SOURCES).
+  const userSources = users && userSourcesEnabled() && user !== null && !isAdmin;
+  const libraryEnabled = isLibraryEnabled() && (!users || isAdmin || userSources);
   // Only computed (and only sent) with the library on: with it off, the
   // browser gets exactly what it always did.
   const features: ClientFeatures = libraryEnabled
@@ -59,6 +60,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       features.userId = user.id;
       features.username = user.username;
       features.isAdmin = isAdmin;
+      if (userSources && libraryEnabled) features.userSources = true;
     }
   }
 

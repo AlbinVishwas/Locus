@@ -4,7 +4,7 @@ import { RegistryUnavailable, withRegistry } from "@/lib/library/sources/appRegi
 import { getRegistrySource, RegistryError, renameRegistrySource, requestRescan, setSourceState } from "@/lib/library/sources/registry";
 import { logActivity, type ActivityKind } from "@/lib/records/activity";
 import { getRecordsDb } from "@/lib/records/db";
-import { activityFor, requireAdmin } from "@/lib/session";
+import { activityFor, requireSourcesAccess } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -15,7 +15,7 @@ const ACTIONS: Record<string, ActivityKind> = { pause: "source_paused", resume: 
 /** { action: "pause" | "resume" | "rescan" | "rename", name? }. The indexer notices within a couple of seconds. */
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   if (getLibraryDb().status === "disabled") return new Response("Not found", { status: 404 });
-  const gate = await requireAdmin(req);
+  const gate = await requireSourcesAccess(req);
   if (!gate.ok) return gate.response;
   const { id } = await ctx.params;
   let body: { action?: unknown; name?: unknown };
@@ -29,7 +29,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const name = withRegistry((registry) => {
       const source = getRegistrySource(registry, id);
-      if (!source) throw new RegistryError("not-found", "No such source.");
+      // An ordinary account reaches only its own folders; anyone else's is simply "no such source".
+      if (!source || (gate.user!.role !== "admin" && source.ownerId !== gate.user!.id)) throw new RegistryError("not-found", "No such source.");
       if (source.state === "removing") throw new RegistryError("invalid", "This source is being removed.");
       if (action === "pause") setSourceState(registry, id, "paused");
       else if (action === "resume") setSourceState(registry, id, "active");
@@ -54,13 +55,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 /** Removes the source: its index entries go (the indexer does it, in the background); the original files are never touched. */
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   if (getLibraryDb().status === "disabled") return new Response("Not found", { status: 404 });
-  const gate = await requireAdmin(req);
+  const gate = await requireSourcesAccess(req);
   if (!gate.ok) return gate.response;
   const { id } = await ctx.params;
   try {
     const name = withRegistry((registry) => {
       const source = getRegistrySource(registry, id);
-      if (!source) throw new RegistryError("not-found", "No such source.");
+      if (!source || (gate.user!.role !== "admin" && source.ownerId !== gate.user!.id)) throw new RegistryError("not-found", "No such source.");
       setSourceState(registry, id, "removing");
       return source.name;
     });

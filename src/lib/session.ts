@@ -4,7 +4,7 @@ import { getRecordsDb } from "./records/db";
 import { claimConversation } from "./records/ownership";
 import { ensureAdminUser, getUser } from "./records/users";
 import type { SessionUser } from "./users/signin";
-import { adminEnabled, usersEnabled } from "./users/mode";
+import { adminEnabled, userSourcesEnabled, usersEnabled } from "./users/mode";
 
 /**
  * Who is making this request, checked on the server for every route that
@@ -71,6 +71,15 @@ function sameOrigin(req: Request): boolean {
   return true;
 }
 
+/** The checks every state-changing admin/sources request gets: this site only, and JSON for anything with a body. */
+function requestChecks(req: Request): Response | null {
+  if (!sameOrigin(req)) return json(403, "Cross-site request refused");
+  if (!["GET", "HEAD", "DELETE"].includes(req.method) && !(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    return json(415, "Send JSON");
+  }
+  return null;
+}
+
 /**
  * The admin area. Not found when it isn't set up (users mode with an admin
  * passcode); otherwise only the admin, only from this site, and for anything
@@ -84,10 +93,27 @@ export async function requireAdmin(req: Request): Promise<Gate> {
     logActivity(getRecordsDb(), activityFor(req, user, { kind: "access_denied", status: "denied", message: `admin area: ${new URL(req.url).pathname}` }));
     return { ok: false, response: json(403, "Admins only") };
   }
-  if (!sameOrigin(req)) return { ok: false, response: json(403, "Cross-site request refused") };
-  if (!["GET", "HEAD", "DELETE"].includes(req.method) && !(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
-    return { ok: false, response: json(415, "Send JSON") };
+  const refused = requestChecks(req);
+  if (refused) return { ok: false, response: refused };
+  return { ok: true, user };
+}
+
+/**
+ * The library and Sources area: the administrator (everything), and -- only with LOCUS_USER_SOURCES=true --
+ * ordinary accounts, who then see and manage only their own folders. The route decides what each may do;
+ * this only says who gets in.
+ */
+export async function requireSourcesAccess(req: Request): Promise<Gate> {
+  if (!usersEnabled()) return { ok: false, response: json(404, "Not found") };
+  const user = await currentUser(req);
+  if (!user) return { ok: false, response: json(401, "Not authenticated") };
+  if (user.role === "admin") return requireAdmin(req);
+  if (!userSourcesEnabled()) {
+    logActivity(getRecordsDb(), activityFor(req, user, { kind: "access_denied", status: "denied", message: `admin area: ${new URL(req.url).pathname}` }));
+    return { ok: false, response: json(403, "Admins only") };
   }
+  const refused = requestChecks(req);
+  if (refused) return { ok: false, response: refused };
   return { ok: true, user };
 }
 

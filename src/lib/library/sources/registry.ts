@@ -27,6 +27,8 @@ export interface RegistrySource {
   rescanRequestedAt: string | null;
   createdAt: string;
   createdBy: string | null;
+  /** The account that owns this source (users mode, LOCUS_USER_SOURCES); null = the administrator's / the library's. */
+  ownerId: number | null;
   updatedAt: string;
 }
 
@@ -43,7 +45,6 @@ CREATE TABLE IF NOT EXISTS sources (
   created_by            TEXT,
   updated_at            TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS sources_name ON sources(lower(name)) WHERE state != 'removing';
 CREATE TABLE IF NOT EXISTS secrets (
   source_id   TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
   blob        TEXT NOT NULL,
@@ -60,6 +61,14 @@ export class RegistryError extends Error {
   }
 }
 
+/** Older registries: add the owner column, and make names unique per owner instead of across everyone. */
+function migrate(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "owner_id")) db.exec("ALTER TABLE sources ADD COLUMN owner_id INTEGER");
+  db.exec("DROP INDEX IF EXISTS sources_name");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS sources_owner_name ON sources(coalesce(owner_id, 0), lower(name)) WHERE state != 'removing'");
+}
+
 export function openRegistry(file: string, options: { readonly?: boolean } = {}): Database.Database {
   if (options.readonly) {
     const db = new Database(file, { readonly: true, fileMustExist: true });
@@ -72,6 +81,7 @@ export function openRegistry(file: string, options: { readonly?: boolean } = {})
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 
@@ -87,6 +97,7 @@ interface Row {
   rescan_requested_at: string | null;
   created_at: string;
   created_by: string | null;
+  owner_id: number | null;
   updated_at: string;
 }
 
@@ -101,12 +112,23 @@ function toSource(r: Row): RegistrySource {
     rescanRequestedAt: r.rescan_requested_at,
     createdAt: r.created_at,
     createdBy: r.created_by,
+    ownerId: r.owner_id ?? null,
     updatedAt: r.updated_at,
   };
 }
 
 export function listRegistry(db: Database.Database): RegistrySource[] {
   return (db.prepare("SELECT * FROM sources ORDER BY rowid").all() as Row[]).map(toSource);
+}
+
+/** The sources one account owns (not the ones being removed). */
+export function listOwnedSources(db: Database.Database, ownerId: number): RegistrySource[] {
+  return (db.prepare("SELECT * FROM sources WHERE owner_id = ? AND state != 'removing' ORDER BY rowid").all(ownerId) as Row[]).map(toSource);
+}
+
+/** An account was removed: its sources go with it (the indexer deletes their index entries). */
+export function removeOwnedSources(db: Database.Database, ownerId: number): number {
+  return db.prepare("UPDATE sources SET state = 'removing', updated_at = ? WHERE owner_id = ? AND state != 'removing'").run(now(), ownerId).changes;
 }
 
 export function getRegistrySource(db: Database.Database, id: string): RegistrySource | null {
@@ -116,7 +138,7 @@ export function getRegistrySource(db: Database.Database, id: string): RegistrySo
 
 export function addRegistrySource(
   db: Database.Database,
-  input: { kind: SourceKind; name: string; config: SourceConfig; secret?: string; managedBy?: ManagedBy; createdBy?: string | null; id?: string }
+  input: { kind: SourceKind; name: string; config: SourceConfig; secret?: string; managedBy?: ManagedBy; createdBy?: string | null; ownerId?: number | null; id?: string }
 ): RegistrySource {
   const id = input.id ?? randomUUID();
   // Sealing first: a missing LOCUS_SECRETS_KEY must fail before anything is saved.
@@ -124,9 +146,9 @@ export function addRegistrySource(
   try {
     db.transaction(() => {
       db.prepare(
-        `INSERT INTO sources (id, kind, name, config, state, managed_by, created_at, created_by, updated_at)
-         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`
-      ).run(id, input.kind, input.name, JSON.stringify(input.config), input.managedBy ?? "app", now(), input.createdBy ?? null, now());
+        `INSERT INTO sources (id, kind, name, config, state, managed_by, created_at, created_by, owner_id, updated_at)
+         VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
+      ).run(id, input.kind, input.name, JSON.stringify(input.config), input.managedBy ?? "app", now(), input.createdBy ?? null, input.ownerId ?? null, now());
       if (blob !== null) db.prepare("INSERT INTO secrets (source_id, blob, updated_at) VALUES (?, ?, ?)").run(id, blob, now());
     })();
   } catch (err) {

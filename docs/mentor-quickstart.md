@@ -62,6 +62,14 @@ for what; ordinary accounts can't see that or each other's work.
 Also worth knowing: **searches are logged for the administrator**, and the
 sign-in page says so.
 
+## Searching a folder of documents (if it has been set up)
+
+If Albin has enabled it, **My folders** appears in the left-hand panel. There you
+can point Locus at a folder of PDFs on the laptop (Add folder → pick the folder →
+**Test** → **Add folder**). Locus reads the documents where they are and indexes
+them in the background; once the folder says "Up to date", choose it (or **All my
+folders**) in the box above the search field. Folders you add are private to you.
+
 ## 5. Change your password
 
 Press **Change password** in the left-hand panel, enter your current password and

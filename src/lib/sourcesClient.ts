@@ -7,6 +7,10 @@ export type { SourceView, WorkerView, TestResult };
 
 export interface SourcesResponse {
   sources: SourceView[];
+  /** "all" for the administrator; "mine" for an ordinary account (only its own folders). */
+  scope: "all" | "mine";
+  /** How many folders an ordinary account may add (null for the administrator). */
+  maxSources: number | null;
   worker: WorkerView;
   connected: boolean;
   allowedRoots: string[];

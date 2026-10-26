@@ -120,37 +120,54 @@ export function countMatches(
   phrase: string,
   mode: SearchMode,
   budgetMs: number,
-  range: RowidRange = EVERYTHING
+  range: RowidRange | readonly RowidRange[] = EVERYTHING
 ): LibraryCounts {
   const started = performance.now();
   const s = stmts(db);
+  const ranges: readonly RowidRange[] = isRangeList(range) ? range : [range];
   let pages = 0;
   let documents = 0;
-  let lastPage = -1;
-  let lastDoc = -1;
   let n = 0;
-  for (const id of (mode === "exact" ? s.exactAll : s.looseAll).iterate(phrase, range[0], range[1]) as IterableIterator<number>) {
-    const pageKey = Math.floor(id / PAGE_KEY_DIVISOR);
-    if (pageKey !== lastPage) {
-      pages++;
-      lastPage = pageKey;
-      const doc = Math.floor(id / DOC_DIVISOR);
-      if (doc !== lastDoc) {
-        documents++;
-        lastDoc = doc;
+  // Several ranges (an account's own folders) never share a document, so their counts simply add.
+  for (const r of ranges) {
+    let lastPage = -1;
+    let lastDoc = -1;
+    for (const id of (mode === "exact" ? s.exactAll : s.looseAll).iterate(phrase, r[0], r[1]) as IterableIterator<number>) {
+      const pageKey = Math.floor(id / PAGE_KEY_DIVISOR);
+      if (pageKey !== lastPage) {
+        pages++;
+        lastPage = pageKey;
+        const doc = Math.floor(id / DOC_DIVISOR);
+        if (doc !== lastDoc) {
+          documents++;
+          lastDoc = doc;
+        }
       }
-    }
-    if (++n % 1024 === 0 && performance.now() - started > budgetMs) {
-      return { pages, documents, complete: false };
+      if (++n % 1024 === 0 && performance.now() - started > budgetMs) {
+        return { pages, documents, complete: false };
+      }
     }
   }
   return { pages, documents, complete: true };
 }
 
+function isRangeList(r: RowidRange | readonly RowidRange[]): r is readonly RowidRange[] {
+  return Array.isArray(r[0]);
+}
+
 export function librarySearch(
   db: Database.Database,
   rawQuery: string,
-  options: { mode: SearchMode; cursor?: number; limit?: number; countBudgetMs?: number; sourceOrdinal?: number }
+  options: {
+    mode: SearchMode;
+    cursor?: number;
+    limit?: number;
+    countBudgetMs?: number;
+    /** Search one source. */
+    sourceOrdinal?: number;
+    /** Search only these sources (an account's own folders). An empty list finds nothing. */
+    sourceOrdinals?: readonly number[];
+  }
 ): LibrarySearchOutcome {
   const started = performance.now();
   const { mode } = options;
@@ -168,10 +185,19 @@ export function librarySearch(
 
   const s = stmts(db);
   const phrase = toFtsPhrase(prepared);
-  const range: RowidRange = options.sourceOrdinal === undefined ? EVERYTHING : sourceTextIdRange(options.sourceOrdinal);
+  const ordinals = options.sourceOrdinals ?? (options.sourceOrdinal === undefined ? undefined : [options.sourceOrdinal]);
+  const ranges: readonly RowidRange[] = ordinals === undefined ? [EVERYTHING] : ordinals.map((o) => sourceTextIdRange(o));
+  if (ranges.length === 0) return empty();
   // Up to two readings per page: 2 * limit + 2 rows always reach limit + 1
   // pages when that many exist, which says whether there's a next window.
-  const rows = (mode === "exact" ? s.exactWindow : s.looseWindow).all(phrase, Math.max(cursor, range[0] - 1), range[1], limit * 2 + 2) as number[];
+  const windowSql = mode === "exact" ? s.exactWindow : s.looseWindow;
+  const need = limit * 2 + 2;
+  // Each range is in rowid order and the ranges don't overlap, so the first `need` rows of all of them
+  // together are the first `need` of each, merged.
+  const rows = ranges
+    .flatMap((r) => windowSql.all(phrase, Math.max(cursor, r[0] - 1), r[1], need) as number[])
+    .sort((a, b) => a - b)
+    .slice(0, need);
   const pages: Array<{ key: number; ids: number[] }> = [];
   for (const id of rows) {
     const key = Math.floor(id / PAGE_KEY_DIVISOR);
@@ -210,12 +236,12 @@ export function librarySearch(
     };
   });
 
-  const counts = cursor === 0 ? countMatches(db, phrase, mode, options.countBudgetMs ?? DEFAULT_COUNT_BUDGET_MS, range) : null;
+  const counts = cursor === 0 ? countMatches(db, phrase, mode, options.countBudgetMs ?? DEFAULT_COUNT_BUDGET_MS, ranges) : null;
   let looseCount: number | null = null;
   if (cursor === 0 && mode === "exact" && hits.length === 0) {
     const loosePrepared = prepareQuery(rawQuery, "loose");
     if (loosePrepared !== "" && codePointLength(loosePrepared) >= LIBRARY_MIN_QUERY_CHARS) {
-      looseCount = countMatches(db, toFtsPhrase(loosePrepared), "loose", options.countBudgetMs ?? DEFAULT_COUNT_BUDGET_MS, range).pages;
+      looseCount = countMatches(db, toFtsPhrase(loosePrepared), "loose", options.countBudgetMs ?? DEFAULT_COUNT_BUDGET_MS, ranges).pages;
     }
   }
   const lastId = windowPages.length > 0 ? windowPages[windowPages.length - 1].key * PAGE_KEY_DIVISOR + 1 : null;

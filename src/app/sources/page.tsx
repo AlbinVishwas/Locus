@@ -1,10 +1,5 @@
-import AdminShell from "@/components/admin/AdminShell";
-import SourcesView from "@/components/sources/SourcesView";
+import SourcesPageTitle from "@/components/sources/SourcesPageTitle";
 
 export default function SourcesPage() {
-  return (
-    <AdminShell title="Sources">
-      <SourcesView />
-    </AdminShell>
-  );
+  return <SourcesPageTitle />;
 }

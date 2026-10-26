@@ -1,6 +1,8 @@
 import { logActivity } from "@/lib/records/activity";
 import { getRecordsDb } from "@/lib/records/db";
 import { getUser, removeUser, resetPasscode, setDisabled, UserError } from "@/lib/records/users";
+import { removeOwnedSources } from "@/lib/library/sources/registry";
+import { RegistryUnavailable, withRegistry } from "@/lib/library/sources/appRegistry";
 import { activityFor, requireAdmin } from "@/lib/session";
 import { deleteConversationUploads } from "@/lib/uploads/pipeline";
 
@@ -57,7 +59,14 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   try {
     const sessions = removeUser(db, user.id);
     for (const conversationId of sessions) await deleteConversationUploads(conversationId);
-    logActivity(db, activityFor(req, gate.user, { kind: "user_removed", message: user.username, details: { sessions: sessions.length } }));
+    // Their folders go with them (the indexer deletes the index entries; the original files are never touched).
+    let folders = 0;
+    try {
+      folders = withRegistry((registry) => removeOwnedSources(registry, user.id));
+    } catch (err) {
+      if (!(err instanceof RegistryUnavailable)) throw err;
+    }
+    logActivity(db, activityFor(req, gate.user, { kind: "user_removed", message: user.username, details: { sessions: sessions.length, folders } }));
     return Response.json({ ok: true }, { headers: noStore });
   } catch (err) {
     if (err instanceof UserError) return Response.json({ error: err.message }, { status: 404 });

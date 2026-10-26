@@ -14,6 +14,8 @@ export interface ClientFeatures {
   username?: string;
   /** The signed-in account is the administrator (Sources, Users, Activity). */
   isAdmin?: boolean;
+  /** Ordinary accounts may add their own folders (LOCUS_USER_SOURCES): they get "My folders" and the folder search scopes. */
+  userSources?: boolean;
 }
 
 /**

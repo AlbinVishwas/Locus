@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { readSessionToken, SESSION_COOKIE } from "@/lib/auth";
-import { usersEnabled } from "@/lib/users/mode";
+import { userSourcesEnabled, usersEnabled } from "@/lib/users/mode";
 
 /**
  * Pages and APIs only the admin may use, in users mode. The proxy only reads
@@ -9,7 +9,12 @@ import { usersEnabled } from "@/lib/users/mode";
  * first of two checks, not the only one.
  */
 const ADMIN_PREFIXES = ["/sources", "/users", "/activity", "/search", "/api/sources", "/api/users", "/api/activity", "/api/search", "/api/library"];
-const isAdminPath = (p: string) => ADMIN_PREFIXES.some((x) => p === x || p.startsWith(`${x}/`));
+/** With LOCUS_USER_SOURCES=true these are open to ordinary accounts too (the routes then limit them to their own folders). */
+const SOURCES_PREFIXES = ["/sources", "/api/sources", "/api/library"];
+const isAdminPath = (p: string) => {
+  const sourcesOpen = userSourcesEnabled();
+  return ADMIN_PREFIXES.some((x) => (p === x || p.startsWith(`${x}/`)) && !(sourcesOpen && SOURCES_PREFIXES.includes(x)));
+};
 
 /**
  * Gate for every page and API route: no valid session cookie, no access.

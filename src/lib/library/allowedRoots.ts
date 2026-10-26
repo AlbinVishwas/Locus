@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { appDir } from "../appDir";
 
 /**
  * Which folders Locus may read when someone adds a source. The Sources page
@@ -12,6 +13,22 @@ import path from "node:path";
  * the indexer itself at the start of every scan. It runs on the server; the
  * browser's idea of a path is never trusted.
  */
+
+/**
+ * Locus's own files besides the library's data folder: the records database (accounts, activity), everyone's
+ * uploads, and the session search index. A source may never contain or sit inside these, whatever the allowed
+ * roots say: with accounts, that would let one person index another's files.
+ */
+function ownDirs(): string[] {
+  const index = process.env.SEARCH_INDEX_PATH?.trim();
+  const records = process.env.LOCUS_APP_DB_PATH?.trim();
+  return [
+    appDir(),
+    process.env.UPLOADS_DIR?.trim() || path.join(process.cwd(), "data/uploads"),
+    index ? path.dirname(path.resolve(index)) : path.join(process.cwd(), "data/index"),
+    ...(records ? [path.dirname(path.resolve(records))] : []),
+  ];
+}
 
 export type RootRefusal =
   | "empty"
@@ -95,6 +112,11 @@ export function resolveAllowed(input: unknown, options: RootOptions): RootCheck 
     const data = realOrNull(options.dataDir) ?? path.resolve(options.dataDir);
     if (isWithin(real, data)) return refuse("inside-data-dir", "That's inside Locus's own data folder.");
     if (isWithin(data, real)) return refuse("contains-data-dir", "That folder contains Locus's own data folder, so it would index its own files.");
+  }
+
+  for (const own of ownDirs()) {
+    const dir = realOrNull(own) ?? path.resolve(own);
+    if (isWithin(real, dir) || isWithin(dir, real)) return refuse("inside-data-dir", "That location holds Locus's own files (accounts, uploads or the search index), so it can't be a source.");
   }
 
   let stat: fs.Stats;

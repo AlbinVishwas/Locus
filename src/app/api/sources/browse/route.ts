@@ -1,14 +1,14 @@
 import { browseFolders } from "@/lib/library/allowedRoots";
 import { getLibraryDb } from "@/lib/library/db";
 import { appLibraryConfig } from "@/lib/library/sources/appRegistry";
-import { requireAdmin } from "@/lib/session";
+import { requireSourcesAccess } from "@/lib/session";
 
 export const runtime = "nodejs";
 
 /** One level of the folder browser: only folders, only inside the allowed roots. ?path= (absent = the roots themselves). */
 export async function GET(req: Request) {
   if (getLibraryDb().status === "disabled") return new Response("Not found", { status: 404 });
-  const gate = await requireAdmin(req);
+  const gate = await requireSourcesAccess(req);
   if (!gate.ok) return gate.response;
   const config = appLibraryConfig();
   const requested = new URL(req.url).searchParams.get("path");

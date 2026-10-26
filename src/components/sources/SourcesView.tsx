@@ -54,6 +54,7 @@ export default function SourcesView() {
     refresh();
   };
 
+  const mine = data?.scope === "mine";
   const worker = data?.worker;
   const used = worker?.usedBytes ?? null;
   const cap = worker?.capBytes ?? data?.capBytes ?? null;
@@ -62,7 +63,13 @@ export default function SourcesView() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          {data && (
+          {data && mine && (
+            <p className="text-[13px] text-secondary">
+              Folders you add are searched only by you. The files stay where they are; Locus only reads them.
+              {data.maxSources ? ` You can add up to ${data.maxSources}.` : ""}
+            </p>
+          )}
+          {data && !mine && (
             <p className="text-[13px] text-secondary">
               {storageLine(
                 { usedBytes: used, capBytes: cap, freeBytes: worker?.freeBytes ?? null, minFreeBytes: worker?.minFreeBytes ?? null },
@@ -70,7 +77,7 @@ export default function SourcesView() {
               )}
             </p>
           )}
-          {used !== null && cap ? (
+          {!mine && used !== null && cap ? (
             <div className="mt-2 h-1.5 max-w-[420px] overflow-hidden rounded-full bg-surface" role="progressbar" aria-label="Library storage used" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={used}>
               <div className="h-full rounded-full bg-cream" style={{ width: `${Math.min((used / cap) * 100, 100)}%` }} />
             </div>
@@ -82,19 +89,25 @@ export default function SourcesView() {
           disabled={!data}
           className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
         >
-          + Add source
+          {mine ? "+ Add folder" : "+ Add source"}
         </button>
       </div>
 
       <div aria-live="polite" className="flex flex-col gap-2">
         {data && !data.worker.running && (
           <p className="rounded-lg border border-line p-3 text-[13px] text-warm">
-            Indexer not running. Start it with <code className="rounded bg-surface px-1.5 py-0.5 text-primary">npm run library:worker</code> — sources are saved, and indexing starts when it does.
+            {mine ? (
+              "Indexing isn't running right now. Your folders are saved and will be indexed as soon as it is."
+            ) : (
+              <>
+                Indexer not running. Start it with <code className="rounded bg-surface px-1.5 py-0.5 text-primary">npm run library:worker</code> — sources are saved, and indexing starts when it does.
+              </>
+            )}
           </p>
         )}
         {data?.worker.limit && (
           <p className="rounded-lg border border-line p-3 text-[13px] text-warm">
-            {data.worker.limit.message} Indexing is paused and nothing has been deleted; searching keeps working. It resumes by itself once there is room.
+            {data.worker.limit.message} {mine ? "Nothing has been deleted; searching keeps working." : "Indexing is paused and nothing has been deleted; searching keeps working. It resumes by itself once there is room."}
           </p>
         )}
         {data && !data.connected && <p className="rounded-lg border border-line p-3 text-[13px] text-warm">The library&apos;s drive isn&apos;t connected.</p>}
@@ -104,9 +117,9 @@ export default function SourcesView() {
       {data === null && !error && <p className="text-[13px] text-secondary">Loading…</p>}
       {data && data.sources.length === 0 && (
         <div className="rounded-xl border border-line p-8 text-center">
-          <p className="text-[13px] text-secondary">No sources yet. Add a folder, a database, or a Google Drive folder to search it.</p>
+          <p className="text-[13px] text-secondary">{mine ? "No folders yet. Add a folder of PDFs on this computer or a connected drive to search it." : "No sources yet. Add a folder, a database, or a Google Drive folder to search it."}</p>
           <button type="button" onClick={() => setAdding(true)} className="mt-3 cursor-pointer rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink">
-            + Add source
+            {mine ? "+ Add folder" : "+ Add source"}
           </button>
         </div>
       )}
@@ -121,6 +134,7 @@ export default function SourcesView() {
       {adding && data && (
         <AddSourceDialog
           info={data}
+          kinds={mine ? ["folder"] : undefined}
           onClose={() => setAdding(false)}
           onAdded={() => {
             setAdding(false);
@@ -176,6 +190,7 @@ function SourceRow({ s, onAct, onRemove }: { s: SourceView; onAct: (s: SourceVie
             {s.name}
           </p>
           {s.managedBy === "env" && <span className="shrink-0 text-[11px] text-secondary">managed in .env</span>}
+          {s.owner && <span className="shrink-0 text-[11px] text-secondary">added by {s.owner}</span>}
         </div>
         <p className="truncate text-[12px] text-secondary" title={s.location}>
           {s.location}

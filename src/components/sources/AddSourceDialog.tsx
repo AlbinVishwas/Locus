@@ -18,8 +18,19 @@ const input = "w-full rounded-lg border border-line bg-page px-3 py-2 text-[13px
 const label = "flex flex-col gap-1 text-[13px] text-secondary";
 
 /** The Add source panel: three tabs, a Test button per tab, and Add only after a Test has passed with the current values. */
-export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick<SourcesResponse, "allowedRoots" | "driveConfigured" | "secretsConfigured">; onClose: () => void; onAdded: () => void }) {
-  const [kind, setKind] = useState<Kind>("folder");
+export default function AddSourceDialog({
+  info,
+  onClose,
+  onAdded,
+  kinds = ["folder", "database", "drive"],
+}: {
+  info: Pick<SourcesResponse, "allowedRoots" | "driveConfigured" | "secretsConfigured">;
+  onClose: () => void;
+  onAdded: () => void;
+  /** Which kinds of source this person may add: an ordinary account gets folders only. */
+  kinds?: Kind[];
+}) {
+  const [kind, setKind] = useState<Kind>(kinds[0] ?? "folder");
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [browsing, setBrowsing] = useState(false);
@@ -108,7 +119,8 @@ export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick
   const onTabKey = (e: React.KeyboardEvent, i: number) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     e.preventDefault();
-    const next = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length].kind;
+    const shown = TABS.filter((t) => kinds.includes(t.kind));
+    const next = shown[(i + (e.key === "ArrowRight" ? 1 : shown.length - 1)) % shown.length].kind;
     setKind(next);
     stale();
     tabRefs.current[next]?.focus();
@@ -121,15 +133,15 @@ export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick
     <>
       <Dialog title="Add source" onClose={close} wide>
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-[14px] font-medium text-primary">Add source</h2>
+          <h2 className="text-[14px] font-medium text-primary">{kinds.length === 1 ? "Add a folder" : "Add source"}</h2>
           <button type="button" onClick={close} aria-label="Close" className="cursor-pointer rounded-lg px-2 py-1 text-secondary hover:bg-surface-hover">
             ✕
           </button>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-          <div role="tablist" aria-label="Kind of source" className="flex gap-1 border-b border-line">
-            {TABS.map((t, i) => (
+          <div role="tablist" aria-label="Kind of source" className={`flex gap-1 border-b border-line ${kinds.length === 1 ? "hidden" : ""}`}>
+            {TABS.filter((t) => kinds.includes(t.kind)).map((t, i) => (
               <button
                 key={t.kind}
                 ref={(el) => {
@@ -330,7 +342,7 @@ export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick
             onClick={runAdd}
             className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy === "add" ? "Adding…" : "Add source"}
+            {busy === "add" ? "Adding…" : kinds.length === 1 ? "Add folder" : "Add source"}
           </button>
         </div>
       </Dialog>

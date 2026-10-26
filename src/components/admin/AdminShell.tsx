@@ -11,10 +11,11 @@ const TABS = [
 ] as const;
 
 /** The frame the admin pages share: a way back, the three admin areas, and a plain "not found" for anyone else. */
-export default function AdminShell({ title, children }: { title: string; children: React.ReactNode }) {
-  const { isAdmin, libraryEnabled } = useFeatures();
+export default function AdminShell({ title, children, access = "admin" }: { title: string; children: React.ReactNode; access?: "admin" | "sources" }) {
+  const { isAdmin, libraryEnabled, userSources } = useFeatures();
   const pathname = usePathname();
-  if (!isAdmin) {
+  // The Sources page is also for ordinary accounts when they may add their own folders; Users and Activity never are.
+  if (!isAdmin && !(access === "sources" && userSources)) {
     return (
       <div className="flex h-dvh items-center justify-center bg-page px-4 text-[13px] text-secondary">Not found</div>
     );
@@ -26,6 +27,7 @@ export default function AdminShell({ title, children }: { title: string; childre
           <Link href="/" className="text-[13px] text-secondary hover:text-primary">
             ← Back to search
           </Link>
+          {isAdmin && (
           <nav aria-label="Admin" className="flex gap-1">
             {TABS.filter((t) => !("needsLibrary" in t) || libraryEnabled).map((t) => (
               <Link
@@ -40,6 +42,7 @@ export default function AdminShell({ title, children }: { title: string; childre
               </Link>
             ))}
           </nav>
+          )}
         </div>
       </header>
       <main className="mx-auto max-w-[1040px] px-4 py-6 md:px-6">

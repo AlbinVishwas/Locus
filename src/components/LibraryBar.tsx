@@ -27,12 +27,12 @@ export function statusText(s: LibraryStatus | null): string {
 }
 
 export default function LibraryBar({ className = "" }: { className?: string }) {
-  const { libraryEnabled, defaultScope = "session" } = useFeatures();
+  const { libraryEnabled, defaultScope = "session", userSources } = useFeatures();
   if (!libraryEnabled) return null;
-  return <LibraryControls fallback={defaultScope} className={className} />;
+  return <LibraryControls fallback={defaultScope} className={className} mine={userSources === true} />;
 }
 
-function LibraryControls({ fallback, className }: { fallback: SearchScope; className: string }) {
+function LibraryControls({ fallback, className, mine }: { fallback: SearchScope; className: string; mine: boolean }) {
   const scope = useSearchScope(fallback);
   const [status, setStatus] = useState<LibraryStatus | null>(null);
 
@@ -79,9 +79,9 @@ function LibraryControls({ fallback, className }: { fallback: SearchScope; class
         onChange={(e) => choose(e.target.value)}
         className="max-w-full cursor-pointer rounded-full border border-line bg-page px-3 py-1.5 text-[12px] text-primary outline-none hover:bg-surface"
       >
-        <option value="all">All sources</option>
+        <option value="all">{mine ? "All my folders" : "All sources"}</option>
         {sources.length > 0 && (
-          <optgroup label="One source">
+          <optgroup label={mine ? "One folder" : "One source"}>
             {sources.map((x) => (
               <option key={x.id} value={`source:${x.id}`}>
                 {x.name}
@@ -90,7 +90,7 @@ function LibraryControls({ fallback, className }: { fallback: SearchScope; class
           </optgroup>
         )}
         <option value="session">My uploads</option>
-        <option value="both">My uploads and all sources</option>
+        <option value="both">{mine ? "My uploads and all my folders" : "My uploads and all sources"}</option>
       </select>
       <p data-testid="library-status" className={disconnected ? "text-warm" : undefined}>
         {statusText(status)}

@@ -62,4 +62,22 @@ export function userUploadLimitBytes(env: Env = process.env): number {
   return n * 1024 * 1024;
 }
 
+/**
+ * Whether ordinary accounts may add their own folders as sources (the "My folders" page and the folder search
+ * scopes). Off unless LOCUS_USER_SOURCES=true, and only in users mode. A user's folders are private to them:
+ * only they (and the administrator) can search them.
+ */
+export function userSourcesEnabled(env: Env = process.env): boolean {
+  return usersEnabled(env) && flag(env.LOCUS_USER_SOURCES);
+}
+
+/** How many folders one ordinary account may add. */
+export function userSourcesMax(env: Env = process.env): number {
+  const raw = env.LOCUS_USER_SOURCES_MAX;
+  if (raw === undefined || raw.trim() === "") return 5;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`LOCUS_USER_SOURCES_MAX must be a whole number of at least 1, got "${raw}"`);
+  return n;
+}
+
 export const ADMIN_USERNAME = "admin";

@@ -18,6 +18,8 @@ export interface SourceView {
   location: string;
   state: SourceState;
   managedBy: "app" | "env";
+  /** The account that owns it (shown to the administrator); null for the administrator's own. */
+  owner: string | null;
   status: { kind: StatusKind; text: string };
   /** 0..1 while indexing, else null. */
   progress: number | null;
@@ -89,7 +91,7 @@ interface ScanRow {
   files_seen: number;
 }
 
-export function describeSources(registry: RegistrySource[], library: Database.Database | null, worker: WorkerView): SourceView[] {
+export function describeSources(registry: RegistrySource[], library: Database.Database | null, worker: WorkerView, ownerNames?: ReadonlyMap<number, string>): SourceView[] {
   return registry.map((s) => {
     let documents = 0;
     let pagesIndexed = 0;
@@ -124,6 +126,6 @@ export function describeSources(registry: RegistrySource[], library: Database.Da
     else if (!scan) status = { kind: "waiting", text: "Waiting to scan" };
     else status = { kind: "ready", text: failed > 0 ? `Up to date · ${n(failed)} couldn't be read` : "Up to date" };
     const progress = status.kind === "indexing" ? documents / Math.max(documents + pending + failed, 1) : null;
-    return { id: s.id, kind: s.kind, name: s.name, location: locationOf(s), state: s.state, managedBy: s.managedBy, status, progress, lastScanAt, documents, pagesIndexed, failed };
+    return { id: s.id, kind: s.kind, name: s.name, location: locationOf(s), state: s.state, managedBy: s.managedBy, owner: s.ownerId === null || !ownerNames ? null : (ownerNames.get(s.ownerId) ?? "(removed account)"), status, progress, lastScanAt, documents, pagesIndexed, failed };
   });
 }

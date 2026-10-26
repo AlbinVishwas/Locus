@@ -1,7 +1,8 @@
 import { extractQuotedText } from "@/lib/chat/documentSearch";
 import { logActivity } from "@/lib/records/activity";
 import { getRecordsDb } from "@/lib/records/db";
-import { activityFor, requireAdmin } from "@/lib/session";
+import { ownedSources, type OwnedSource } from "@/lib/library/sources/owned";
+import { activityFor, requireSourcesAccess } from "@/lib/session";
 import type { SessionUser } from "@/lib/users/signin";
 import { usersEnabled } from "@/lib/users/mode";
 import type { LibrarySearchResult } from "@/lib/library/query";
@@ -32,12 +33,15 @@ function emptyResult(query: string, mode: "exact" | "loose", cursor: number): Li
 export async function POST(req: Request) {
   const conn = getLibraryDb();
   if (conn.status === "disabled") return new Response("Not found", { status: 404 });
-  // Users mode: the library belongs to the admin; everyone else searches only their own uploads.
+  // Users mode: the administrator searches the whole library. Everyone else is let in only with
+  // LOCUS_USER_SOURCES=true, and then searches only the folders they added themselves.
   let admin: SessionUser | null = null;
+  let mine: OwnedSource[] | null = null;
   if (usersEnabled()) {
-    const gate = await requireAdmin(req);
+    const gate = await requireSourcesAccess(req);
     if (!gate.ok) return gate.response;
     admin = gate.user;
+    if (admin?.role !== "admin") mine = ownedSources(conn.status === "ok" ? conn.db : null, admin!.id);
   }
 
   let body: { message?: unknown; query?: unknown; mode?: unknown; cursor?: unknown; source?: unknown };
@@ -66,13 +70,27 @@ export async function POST(req: Request) {
 
   // One source, by its id; unknown ids simply have no results.
   let sourceOrdinal: number | undefined;
-  let scope = "all-sources";
+  let sourceOrdinals: number[] | undefined;
+  let scope = mine ? "my-folders" : "all-sources";
+  if (mine) {
+    // Only the account's own folders that the indexer has reached; anything else finds nothing.
+    sourceOrdinals = mine.filter((s) => s.ordinal !== null).map((s) => s.ordinal as number);
+  }
   if (body.source !== undefined) {
     if (typeof body.source !== "string" || body.source.length > 200) return new Response("`source` must be a source id", { status: 400 });
-    const row = conn.db.prepare("SELECT ordinal, coalesce(name, kind) AS name FROM sources WHERE id = ?").get(body.source) as { ordinal: number | null; name: string } | undefined;
-    if (!row) return json({ status: "ok", result: emptyResult(text, mode, cursor), source: body.source });
-    sourceOrdinal = row.ordinal ?? 0;
-    scope = `source:${row.name}`;
+    if (mine) {
+      // One of their own folders, or nothing: someone else's id is indistinguishable from one that doesn't exist.
+      const own = mine.find((s) => s.id === body.source);
+      if (!own || own.ordinal === null) return json({ status: "ok", result: emptyResult(text, mode, cursor), source: body.source });
+      sourceOrdinal = own.ordinal;
+      sourceOrdinals = undefined;
+      scope = `source:${own.name}`;
+    } else {
+      const row = conn.db.prepare("SELECT ordinal, coalesce(name, kind) AS name FROM sources WHERE id = ?").get(body.source) as { ordinal: number | null; name: string } | undefined;
+      if (!row) return json({ status: "ok", result: emptyResult(text, mode, cursor), source: body.source });
+      sourceOrdinal = row.ordinal ?? 0;
+      scope = `source:${row.name}`;
+    }
   }
 
   const query = isPage ? text.trim() : (extractQuotedText(text) ?? text).trim();
@@ -82,7 +100,7 @@ export async function POST(req: Request) {
     logActivity(getRecordsDb(), activityFor(req, admin, { kind: a.status === "error" ? "search_failed" : isPage ? "search_more" : "search", scope, queryText: query, resultPages: a.pages ?? null, resultDocuments: a.documents ?? null, tookMs: performance.now() - started, status: a.status ?? "ok", message: a.message ?? null }));
   };
   try {
-    const outcome = librarySearch(conn.db, query, { mode, cursor, sourceOrdinal });
+    const outcome = librarySearch(conn.db, query, { mode, cursor, sourceOrdinal, sourceOrdinals });
     if (outcome.status === "ok") record({ pages: outcome.result.counts?.pages, documents: outcome.result.counts?.documents });
     else record({ message: outcome.status });
     return json(outcome.status === "ok" && typeof body.source === "string" ? { ...outcome, source: body.source } : outcome);
