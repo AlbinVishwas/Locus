@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runText } from "../../../../scripts/indexer/exec";
+import { isUnderVolumes } from "./location";
 
 /**
  * Which volume a folder is really on, and whether the library may write
@@ -11,23 +12,25 @@ import { runText } from "../../../../scripts/indexer/exec";
  *                            through firmlinks; `mount` alone can't tell)
  *   mount                    that mount's filesystem type and flags ("local"
  *                            is absent on network mounts)
- *   diskutil info -plist     Internal, BusProtocol (a disk image says so),
- *                            the APFS container, the volume UUID
+ *   diskutil info -plist     Internal, BusProtocol, the APFS container, the
+ *                            volume UUID
  *
- * Refused, each with its own message:
- *   - unset, missing, not a folder (LOCUS_DATA_DIR is never created by Locus:
- *     after a drive is unplugged macOS can leave an empty /Volumes/<name>
- *     folder on the internal disk, and creating the data dir there would
- *     write to the boot volume)
+ * The library's data may live on this Mac's own disk (the default, capped by
+ * LOCUS_LIBRARY_MAX_GB and kept clear of the free-space reserve: see
+ * limits.ts) or on an external drive. Refused, each with its own message:
  *   - a network filesystem: SQLite's locking and WAL aren't safe there
  *   - FAT32 ("msdos"): no file over 4 GB, and the index will be far bigger
  *   - exFAT, unless LOCUS_DATA_DIR_ALLOW_EXFAT=true: no journal, so pulling
  *     the drive mid-write -- a case the library is built to survive -- can
  *     damage the filesystem itself, underneath SQLite, and macOS's exFAT
  *     driver gives weaker flush guarantees than APFS. APFS is recommended.
- *   - a disk image: it can be a file sitting on the internal disk
- *   - the internal disk, or anything in the boot volume's APFS container
  *   - read-only volumes, and anything that can't be identified for sure
+ * A disk image is allowed with a warning (it's a file-backed volume).
+ *
+ * A folder under /Volumes that doesn't exist is refused rather than created:
+ * after a drive is unplugged macOS can leave an empty /Volumes/<name> folder
+ * on the internal disk, and creating the data dir there would quietly put the
+ * library on the wrong disk. Anywhere else, a missing folder is created.
  */
 
 export type Runner = (command: string, args: string[]) => Promise<string>;
@@ -55,9 +58,6 @@ export type RefusalReason =
   | "network"
   | "fat32"
   | "exfat"
-  | "disk-image"
-  | "internal"
-  | "boot-container"
   | "read-only"
   | "unidentified";
 
@@ -68,7 +68,7 @@ export type VolumeVerdict =
 const NETWORK_TYPES = new Set(["smbfs", "nfs", "afpfs", "webdav", "cifs", "ftp", "macfuse", "osxfuse", "fusefs"]);
 
 const APFS_HINT =
-  "Use an external drive formatted as APFS (Disk Utility → Erase → APFS), and point LOCUS_DATA_DIR at a folder on it, e.g. /Volumes/<drive>/locus-data.";
+  "Use this Mac's own disk (leave LOCUS_DATA_DIR unset), or an external drive formatted as APFS (Disk Utility → Erase → APFS) with LOCUS_DATA_DIR set to a folder on it, e.g. /Volumes/<drive>/locus-data.";
 
 /**
  * Top-level scalar keys of an XML property list (what `diskutil info
@@ -169,21 +169,22 @@ export async function probeVolume(dir: string, run: Runner = defaultRunner): Pro
   };
 }
 
-/** The APFS container (or whole disk) the running system booted from. */
-export async function bootContainer(run: Runner = defaultRunner): Promise<string | null> {
-  try {
-    const p = parsePlistScalars(await run("diskutil", ["info", "-plist", "/"]));
-    const ref = p.APFSContainerReference ?? p.ParentWholeDisk;
-    return typeof ref === "string" ? ref : null;
-  } catch {
-    return null;
+/** The nearest folder that exists at or above `p` (the volume a to-be-created folder would land on). */
+function nearestExisting(p: string): string {
+  let cur = path.resolve(p);
+  while (!fs.existsSync(cur)) {
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
   }
+  return cur;
 }
 
 /**
- * The verdict for LOCUS_DATA_DIR. `allowExfat` is the one override there
- * is (LOCUS_DATA_DIR_ALLOW_EXFAT); nothing lets the internal disk, a disk
- * image, a network drive or FAT32 through.
+ * The verdict for LOCUS_DATA_DIR. `allowExfat` is the one override there is
+ * (LOCUS_DATA_DIR_ALLOW_EXFAT); nothing lets a network drive or FAT32
+ * through. The Mac's own disk is fine: its limits are the cap and the
+ * free-space reserve (limits.ts), not the volume check.
  */
 export async function checkDataDir(
   dataDir: string | null,
@@ -194,36 +195,37 @@ export async function checkDataDir(
     return {
       ok: false,
       reason: "unset",
-      message: `LOCUS_DATA_DIR is not set. The library writes its index, OCR cache, temp files and logs there, and only there. ${APFS_HINT}`,
+      message: `No data folder is configured for the library. ${APFS_HINT}`,
     };
   }
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(dataDir);
-  } catch {
-    return {
-      ok: false,
-      reason: "missing",
-      message:
-        `LOCUS_DATA_DIR (${dataDir}) does not exist. Is the external drive plugged in and mounted? ` +
-        `Locus never creates this folder itself -- create it once on the external drive (mkdir "${dataDir}").`,
-    };
-  }
-  if (!stat.isDirectory()) {
+  let probeDir = dataDir;
+  if (!fs.existsSync(dataDir)) {
+    if (isUnderVolumes(dataDir)) {
+      return {
+        ok: false,
+        reason: "missing",
+        message:
+          `LOCUS_DATA_DIR (${dataDir}) does not exist. Is the external drive plugged in and mounted? ` +
+          `Locus never creates a folder under /Volumes itself -- create it once on the drive (mkdir "${dataDir}").`,
+      };
+    }
+    // Anywhere else it will be created; judge the volume it would land on.
+    probeDir = nearestExisting(dataDir);
+  } else if (!fs.statSync(dataDir).isDirectory()) {
     return { ok: false, reason: "not-a-directory", message: `LOCUS_DATA_DIR (${dataDir}) is not a folder.` };
   }
 
   let info: VolumeInfo;
   try {
-    info = await probeVolume(dataDir, run);
+    info = await probeVolume(probeDir, run);
   } catch (err) {
     return {
       ok: false,
       reason: "unidentified",
-      message: `Couldn't identify the volume holding LOCUS_DATA_DIR (${dataDir}): ${err instanceof Error ? err.message : err}. Refusing rather than risk writing to the internal disk.`,
+      message: `Couldn't identify the volume holding the library data (${dataDir}): ${err instanceof Error ? err.message : err}. Refusing rather than guess.`,
     };
   }
-  const where = `LOCUS_DATA_DIR (${dataDir}) is on ${info.volumeName ? `"${info.volumeName}" ` : ""}${info.mountPoint} (${info.fsType})`;
+  const where = `The library data folder (${dataDir}) is on ${info.volumeName ? `"${info.volumeName}" ` : ""}${info.mountPoint} (${info.fsType})`;
 
   if (!info.local || NETWORK_TYPES.has(info.fsType)) {
     return {
@@ -251,37 +253,12 @@ export async function checkDataDir(
         `${APFS_HINT} To use this exFAT drive anyway, set LOCUS_DATA_DIR_ALLOW_EXFAT=true.`,
     };
   }
-  if (info.busProtocol === "Disk Image") {
-    return {
-      ok: false,
-      reason: "disk-image",
-      info,
-      message: `${where}, a mounted disk image -- which may itself be a file on the internal disk. ${APFS_HINT}`,
-    };
-  }
   if (info.internal === null) {
     return {
       ok: false,
       reason: "unidentified",
       info,
-      message: `${where}, but diskutil couldn't say whether that disk is internal or external. Refusing rather than risk writing to the internal disk.`,
-    };
-  }
-  if (info.internal) {
-    return {
-      ok: false,
-      reason: "internal",
-      info,
-      message: `${where}, which is this Mac's internal disk. The library must not use internal storage. ${APFS_HINT}`,
-    };
-  }
-  const boot = await bootContainer(run);
-  if (boot !== null && info.container === boot) {
-    return {
-      ok: false,
-      reason: "boot-container",
-      info,
-      message: `${where}, which shares the boot disk's APFS container (${boot}). ${APFS_HINT}`,
+      message: `${where}, but diskutil couldn't identify the disk. Refusing rather than guess.`,
     };
   }
   if (info.writable === false) {
@@ -293,6 +270,9 @@ export async function checkDataDir(
     warnings.push(
       `LOCUS_DATA_DIR is on exFAT (allowed by LOCUS_DATA_DIR_ALLOW_EXFAT). Unplugging mid-write can damage the drive's filesystem; APFS is recommended.`
     );
+  }
+  if (info.busProtocol === "Disk Image") {
+    warnings.push(`The library data folder is on a mounted disk image, which is backed by a file on another disk.`);
   }
   return { ok: true, info, warnings };
 }

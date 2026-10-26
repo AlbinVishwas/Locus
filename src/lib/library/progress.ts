@@ -59,7 +59,10 @@ export function progressLine(p: Progress, now: number, memory?: MemoryPeak): Pro
     `ETA ${etaSeconds === null ? (remainingFiles === 0 && !p.scanning ? "done" : "–") : formatDuration(etaSeconds)}`,
   ];
   if (p.scanning) parts.push(`scanning (${n(p.scanFilesSeen)} PDFs found, ${n(p.scanSkipped)} skipped)`);
-  if (p.freeBytes !== null) parts.push(`free ${formatBytes(p.freeBytes)}`);
+  if (p.usedBytes !== null && p.capBytes !== null && p.capBytes < Number.MAX_SAFE_INTEGER) {
+    parts.push(`library ${formatBytes(p.usedBytes)} of ${formatBytes(p.capBytes)}`);
+  }
+  if (p.freeBytes !== null) parts.push(`${formatBytes(p.freeBytes)} free`);
   if (memory) parts.push(`RAM ${formatBytes(memory.currentTotal)} (peak ${formatBytes(memory.peakTotal)})`);
   return { text: parts.join(" · "), pagesPerSec: rate, etaSeconds };
 }

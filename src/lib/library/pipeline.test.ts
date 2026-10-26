@@ -233,7 +233,7 @@ describe.skipIf(skipOcr)("library pipeline", () => {
     expect(fs.readdirSync(guard.paths.tmp)).toEqual([]);
   }, 180_000);
 
-  it("pauses on low free space (before starting) and resumes once space is freed", async () => {
+  it("pauses on the free-space reserve (before starting) and resumes once space is freed", async () => {
     await makePdf(path.join(src, "a.pdf"), [{ lines: [LONG] }], work);
     const guard = fakeGuard(data, 10 * 1024 ** 3);
     guard.free = 1 * 1024 ** 3;
@@ -244,9 +244,85 @@ describe.skipIf(skipOcr)("library pipeline", () => {
     const p = await ix.run();
     clearInterval(watcher);
     expect(states).toContain("paused: low disk space");
-    expect(logs.find((l) => l.startsWith("Paused: low disk space"))).toMatch(/1\.0 GB free, need 10\.0 GB/);
+    expect(logs.find((l) => l.startsWith("Paused: low disk space"))).toBe(
+      "Paused: low disk space. 1.0 GB free; Locus keeps 10.0 GB in reserve. Free some space on this Mac; indexing resumes on its own."
+    );
+    expect(logs.some((l) => l.startsWith("Back under the limits. Resuming"))).toBe(true);
     expect(p.filesIndexed).toBe(1);
   }, 60_000);
+
+  it("pauses at the storage cap mid-run, deletes NOTHING, keeps search working, and resumes when usage drops", async () => {
+    for (let i = 0; i < 6; i++) {
+      await makePdf(path.join(src, `f${i}.pdf`), [{ lines: [`${LONG} file ${i}`] }, { lines: [`second page of file number ${i} here`] }], work);
+    }
+    const guard = fakeGuard(data);
+    guard.cap = 1000;
+    let ixRef: LibraryIndexer | null = null;
+    let crossed = false;
+    const { ix, logs } = indexer(
+      guard,
+      { filesInFlight: 2, pageWindow: 1 },
+      {
+        beforeWrite: () => {
+          // Two documents are done: the library just crossed its cap (once).
+          if (!crossed && ixRef && ixRef.progress.filesIndexed >= 2) {
+            crossed = true;
+            guard.used = 2000;
+          }
+        },
+      }
+    );
+    ixRef = ix;
+    const running = ix.run();
+
+    const deadline = Date.now() + 60_000;
+    while (ix.progress.state !== "paused: storage limit" && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    expect(ix.progress.state).toBe("paused: storage limit");
+    expect(ix.progress.limit).toMatchObject({ kind: "cap", usedBytes: 2000, capBytes: 1000 });
+    expect(logs.find((l) => l.startsWith("Paused: storage limit"))).toBe(
+      "Paused: storage limit. The library uses 0.0 GB of its 0.0 GB limit. Remove a source, or raise LOCUS_LIBRARY_MAX_GB. Nothing has been deleted."
+    );
+
+    // While paused: let in-flight work settle, then take stock.
+    await new Promise((r) => setTimeout(r, 400));
+    const stock = () => {
+      const d = db();
+      try {
+        return {
+          ready: Number(d.prepare("SELECT count(*) FROM documents WHERE status = 'ready'").pluck().get()),
+          texts: Number(d.prepare("SELECT count(*) FROM texts WHERE id IN (SELECT t.id FROM texts t JOIN documents x ON x.id = t.id / 2097152 WHERE x.status = 'ready')").pluck().get()),
+          ocr: Number(new Database(guard.paths.ocrCache, { readonly: true }).prepare("SELECT count(*) FROM ocr").pluck().get()),
+        };
+      } finally {
+        d.close();
+      }
+    };
+    const atPause = stock();
+    expect(atPause.ready).toBeGreaterThan(0);
+    expect(atPause.ready).toBeLessThan(6);
+    // Nothing is claimed while paused...
+    await new Promise((r) => setTimeout(r, 400));
+    expect(stock()).toEqual(atPause);
+    // ...and search keeps working on what's indexed.
+    const readyKey = (db().prepare("SELECT key FROM documents WHERE status = 'ready' ORDER BY id LIMIT 1").pluck().get() as string);
+    expect(find("second page of file number")).toContain(`${readyKey}#2`);
+    expect(fs.readdirSync(guard.paths.tmp).filter((n) => n.startsWith("file-"))).toEqual([]);
+
+    guard.used = 0; // space is back
+    const p = await running;
+    expect(p.state).toBe("done");
+    expect(logs.some((l) => l.startsWith("Back under the limits. Resuming"))).toBe(true);
+    const d = db();
+    try {
+      expect(d.prepare("SELECT count(*) FROM documents WHERE status = 'ready'").pluck().get()).toBe(6);
+      expect(d.prepare("SELECT count(*) FROM texts").pluck().get()).toBe(18); // exactly once, as without a pause
+      expect(d.prepare("SELECT count(*) FROM jobs").pluck().get()).toBe(0);
+      expect(d.prepare("PRAGMA integrity_check").pluck().get()).toBe("ok");
+    } finally {
+      d.close();
+    }
+    expect(find("file number 4")).toEqual(["f4.pdf#2"]);
+  }, 180_000);
 
   it("a file still being written is deferred, then indexed once it settles", async () => {
     await makePdf(path.join(src, "fresh.pdf"), [{ lines: [LONG] }], work);

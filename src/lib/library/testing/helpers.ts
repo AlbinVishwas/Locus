@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeFixturePdf, type FixturePage } from "../../../../scripts/indexer/fixtures";
 import { libraryPaths, loadLibraryConfig, type LibraryConfig } from "../config";
+import { evaluateLimits } from "../storage/limits";
 import type { GuardLike } from "../pipeline";
 
 /**
@@ -15,7 +16,12 @@ import type { GuardLike } from "../pipeline";
 
 export interface FakeGuard extends GuardLike {
   connected: boolean;
+  /** Free bytes on the pretend disk. */
   free: number;
+  /** What the library pretends to be using. */
+  used: number;
+  /** The pretend storage cap. */
+  cap: number;
   waits: number;
 }
 
@@ -26,8 +32,9 @@ export function fakeGuard(dataDir: string, minFreeBytes = 1024): FakeGuard {
     paths,
     connected: true,
     free: 100 * 1024 ** 3,
+    used: 0,
+    cap: 1024 ** 4,
     waits: 0,
-    minFreeBytes,
     isConnected: () => g.connected,
     verifyConnected: async () => g.connected,
     async waitForReconnect(signal, intervalMs = 10) {
@@ -38,8 +45,7 @@ export function fakeGuard(dataDir: string, minFreeBytes = 1024): FakeGuard {
       }
       return false;
     },
-    freeBytes: () => g.free,
-    hasEnoughSpace: () => g.free >= minFreeBytes,
+    checkLimits: () => evaluateLimits({ usedBytes: g.used, capBytes: g.cap, freeBytes: g.free, minFreeBytes, marginBytes: 0 }),
   };
   return g;
 }

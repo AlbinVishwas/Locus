@@ -1,33 +1,43 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { isLibraryEnabled } from "./config";
+import { defaultDataDir, isLibraryEnabled } from "./config";
+import { isUnderVolumes, readLocation } from "./storage/location";
 
 /**
  * The app's read-only connection to the library index on the external
  * drive. Never throws for a drive that's missing: every caller gets a
  * status it can show ("Library drive not connected") instead.
  *
- * "Connected" means the drive's marker file (written by the indexer's
- * volume check, storage/guard.ts) is there, on the same device as last
- * time. An unplugged drive fails that; so does an empty /Volumes/<name>
- * folder left behind on the internal disk. The connection is opened
- * read-only -- the app never writes the library index.
+ * The library lives on this Mac's disk by default, or on an external drive.
+ * "Connected" means the marker file (written by the indexer's volume check,
+ * storage/guard.ts) is there, on the same device as last time. An unplugged
+ * external drive fails that; so does an empty /Volumes/<name> folder left
+ * behind on the internal disk. For a library that lives on the Mac's own
+ * disk there is nothing to unplug, so a missing marker just means nothing has
+ * been indexed yet. The connection is opened read-only -- the app never
+ * writes the library index.
  */
 
 export type LibraryConnection =
   | { status: "disabled" }
-  | { status: "unconfigured" }
   | { status: "disconnected" }
   | { status: "empty" }
   | { status: "ok"; db: Database.Database };
 
 let cached: { file: string; ino: number; markerDev: number; db: Database.Database } | null = null;
 
-function dataDir(): string | null {
+export function libraryDataDir(): string {
   const raw = process.env.LOCUS_DATA_DIR?.trim();
-  // turbopackIgnore: a runtime path, outside the project -- never traced into a build.
-  return raw ? path.resolve(/*turbopackIgnore: true*/ raw) : null;
+  // turbopackIgnore: a runtime path -- never traced into a build.
+  return raw ? path.resolve(/*turbopackIgnore: true*/ raw) : defaultDataDir();
+}
+
+/** Whether the library lives on a drive that can go away (so a missing marker means "unplugged", not "not started"). */
+function onRemovableDrive(dir: string): boolean {
+  if (isUnderVolumes(dir)) return true;
+  const loc = readLocation();
+  return loc !== null && loc.external && path.resolve(loc.dataDir) === dir;
 }
 
 function closeCached(): void {
@@ -41,15 +51,14 @@ function closeCached(): void {
 
 export function getLibraryDb(): LibraryConnection {
   if (!isLibraryEnabled()) return { status: "disabled" };
-  const dir = dataDir();
-  if (!dir) return { status: "unconfigured" };
+  const dir = libraryDataDir();
 
   let markerDev: number;
   try {
     markerDev = fs.statSync(/*turbopackIgnore: true*/ path.join(dir, ".locus-data-dir")).dev;
   } catch {
     closeCached();
-    return { status: "disconnected" };
+    return onRemovableDrive(dir) ? { status: "disconnected" } : { status: "empty" };
   }
   const file = path.join(dir, "library", "library.db");
   let ino: number;
@@ -83,8 +92,8 @@ export function libraryErrorStatus(err: unknown): "disconnected" | null {
   const code = String((err as { code?: unknown })?.code ?? "");
   const gone = code.startsWith("SQLITE_IOERR") || code === "SQLITE_CANTOPEN" || code === "SQLITE_NOTADB" || code === "SQLITE_CORRUPT";
   const markerGone = (() => {
-    const dir = dataDir();
-    if (!dir) return true;
+    const dir = libraryDataDir();
+    if (!onRemovableDrive(dir)) return false;
     try {
       fs.statSync(/*turbopackIgnore: true*/ path.join(dir, ".locus-data-dir"));
       return false;

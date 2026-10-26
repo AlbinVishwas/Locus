@@ -14,13 +14,11 @@ export async function GET() {
   if (conn.status === "disabled") return new Response("Not found", { status: 404 });
   const json = (s: LibraryStatus) => Response.json(s, { headers: { "Cache-Control": "no-store" } });
   const none = { documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 };
-  if (conn.status === "unconfigured") return json({ configured: false, connected: false, ...none });
-  if (conn.status === "disconnected") return json({ configured: true, connected: false, ...none });
-  if (conn.status === "empty") return json({ configured: true, connected: true, ...none });
+  if (conn.status === "disconnected") return json({ connected: false, ...none });
+  if (conn.status === "empty") return json({ connected: true, ...none });
   try {
     const c = libraryCounts(conn.db);
     return json({
-      configured: true,
       connected: true,
       documents: c.ready,
       pagesIndexed: c.pagesIndexed,
@@ -28,7 +26,7 @@ export async function GET() {
       failed: c.failures,
     });
   } catch (err) {
-    if (libraryErrorStatus(err) === "disconnected") return json({ configured: true, connected: false, ...none });
+    if (libraryErrorStatus(err) === "disconnected") return json({ connected: false, ...none });
     console.error("[/api/library/status] failed", { error: err instanceof Error ? err.message : err });
     return new Response("Library status failed. See the server log for details.", { status: 500 });
   }

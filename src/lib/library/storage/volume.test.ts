@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DataDirGuard, StorageRefusedError } from "./guard";
+import { readLocation } from "./location";
 import { checkDataDir, parseDf, parseMountLine, parsePlistScalars, type Runner } from "./volume";
 
 const FIX = path.join(import.meta.dirname, "__fixtures__");
@@ -88,31 +89,35 @@ describe("checkDataDir: refusals, each with its own message", () => {
     expect(v.ok).toBe(false);
     if (v.ok) return;
     expect(v.reason).toBe("unset");
-    expect(v.message).toContain("LOCUS_DATA_DIR is not set");
+    expect(v.message).toContain("No data folder is configured");
     expect(v.message).toContain("APFS");
   });
 
-  it("missing: never created, with a drive-not-mounted hint", async () => {
-    const v = await checkDataDir(path.join(dir, "nope"));
+  it("missing under /Volumes: refused, never created, with a drive-not-mounted hint", async () => {
+    const gone = "/Volumes/DefinitelyNotPlugged-7f3a/locus-data";
+    const v = await checkDataDir(gone);
     expect(v).toMatchObject({ ok: false, reason: "missing" });
-    if (!v.ok) expect(v.message).toContain("Locus never creates this folder");
-    expect(fs.existsSync(path.join(dir, "nope"))).toBe(false);
+    if (!v.ok) expect(v.message).toContain("never creates a folder under /Volumes");
+    expect(fs.existsSync(gone)).toBe(false);
   });
 
-  it("this Mac's internal data volume (real fixtures)", async () => {
+  it("missing elsewhere: fine -- it will be created, and the volume it would land on is judged", async () => {
+    const v = await checkDataDir(path.join(dir, "not", "yet", "created"), {
+      run: runner({ df: "/dev/disk3s5  965492904 705421968 210048424    78%    /System/Volumes/Data", diskutil: "diskutil-data.plist" }),
+    });
+    expect(v.ok).toBe(true);
+    expect(fs.existsSync(path.join(dir, "not"))).toBe(false); // checking creates nothing
+  });
+
+  it("this Mac's own disk is allowed (real fixtures): its limits are the cap and the reserve", async () => {
     const v = await checkDataDir(dir, {
       run: runner({ df: "/dev/disk3s5  965492904 705421968 210048424    78%    /System/Volumes/Data", diskutil: "diskutil-data.plist" }),
     });
-    expect(v).toMatchObject({ ok: false, reason: "internal" });
-    if (!v.ok) expect(v.message).toContain("internal disk");
-  });
-
-  it("a ghost /Volumes/<name> folder left on the internal disk after an unplug resolves to the internal volume", async () => {
-    // df reports the volume that actually holds the folder: the Data volume.
-    const v = await checkDataDir(dir, {
-      run: runner({ df: "/dev/disk3s5  965492904 705421968 210048424    78%    /System/Volumes/Data", diskutil: "diskutil-data.plist" }),
-    });
-    expect(v).toMatchObject({ ok: false, reason: "internal" });
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.info).toMatchObject({ fsType: "apfs", internal: true, mountPoint: "/System/Volumes/Data" });
+      expect(v.warnings).toEqual([]);
+    }
   });
 
   it("SMB network share", async () => {
@@ -165,7 +170,7 @@ describe("checkDataDir: refusals, each with its own message", () => {
     if (allowed.ok) expect(allowed.warnings.join(" ")).toContain("APFS is recommended");
   });
 
-  it("a mounted disk image", async () => {
+  it("a mounted disk image is allowed, with a warning", async () => {
     const v = await checkDataDir(dir, {
       run: runner({
         df: "/dev/disk9s1 1000 10 990 1% /Volumes/ImageVol",
@@ -173,19 +178,8 @@ describe("checkDataDir: refusals, each with its own message", () => {
         diskutil: "diskutil-disk-image.plist",
       }),
     });
-    expect(v).toMatchObject({ ok: false, reason: "disk-image" });
-  });
-
-  it("an external volume that turns out to share the boot container", async () => {
-    const v = await checkDataDir(dir, {
-      run: async (command, args) => {
-        if (command === "diskutil" && args[2] !== "/") {
-          return fixture("diskutil-external-apfs.plist").replace("<string>disk5</string>", "<string>disk3</string>");
-        }
-        return runner(EXTERNAL_APFS)(command, args);
-      },
-    });
-    expect(v).toMatchObject({ ok: false, reason: "boot-container" });
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.warnings.join(" ")).toContain("disk image");
   });
 
   it("read-only external volume", async () => {
@@ -220,15 +214,17 @@ describe("checkDataDir: refusals, each with its own message", () => {
 });
 
 describe.skipIf(process.platform !== "darwin")("checkDataDir on this Mac, for real", () => {
-  it("refuses a folder on the internal disk using the real df/mount/diskutil", async () => {
+  it("accepts a folder on this Mac's own disk using the real df/mount/diskutil", async () => {
     const v = await checkDataDir(dir);
-    expect(v.ok).toBe(false);
-    if (!v.ok) {
-      expect(["internal", "boot-container"]).toContain(v.reason);
-      expect(v.info?.internal).toBe(true);
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.info.internal).toBe(true);
+      expect(v.info.fsType).toBe("apfs");
     }
-    const home = await checkDataDir(os.homedir());
-    expect(home.ok).toBe(false);
+    // A folder that doesn't exist yet is judged on the volume it would land on.
+    const later = await checkDataDir(path.join(os.homedir(), "locus-data-that-does-not-exist-yet"));
+    expect(later.ok).toBe(true);
+    expect(fs.existsSync(path.join(os.homedir(), "locus-data-that-does-not-exist-yet"))).toBe(false);
   });
 });
 
@@ -238,12 +234,20 @@ describe("DataDirGuard", () => {
     minFreeBytes: 20 * 1024 ** 3,
     run,
     freeBytesOf: () => free,
+    locationFile: null,
   });
 
-  it("refuses on init exactly as checkDataDir does", async () => {
-    const guard = new DataDirGuard(dir, options(runner({ df: "/dev/disk3s5 1 1 1 1% /System/Volumes/Data", diskutil: "diskutil-data.plist" })));
+  it("refuses a network drive on init, writing nothing", async () => {
+    const guard = new DataDirGuard(
+      dir,
+      options(
+        runner({
+          df: "//albin@nas.local/share  1000 10 990 1% /Volumes/share",
+          mountExtra: "//albin@nas.local/share on /Volumes/share (smbfs, nodev, nosuid, mounted by albin)\n",
+        })
+      )
+    );
     await expect(guard.init()).rejects.toBeInstanceOf(StorageRefusedError);
-    // Nothing written on a refusal.
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
@@ -257,6 +261,29 @@ describe("DataDirGuard", () => {
       version: 1,
     });
     expect(guard.isConnected()).toBe(true);
+  });
+
+  it("creates a data dir that doesn't exist yet (anywhere but /Volumes), on this Mac's own disk", async () => {
+    const target = path.join(dir, "data", "locus-data");
+    const guard = new DataDirGuard(target, options(runner({ df: "/dev/disk3s5 1 1 1 1% /System/Volumes/Data", diskutil: "diskutil-data.plist" })));
+    await guard.init();
+    expect(fs.existsSync(path.join(target, ".locus-data-dir"))).toBe(true);
+    expect(fs.existsSync(path.join(target, "library", "tmp"))).toBe(true);
+  });
+
+  it("records where the library lives (and whether that's an external drive) in the app's own folder", async () => {
+    const note = path.join(dir, "app", "library-location.json");
+    const external = new DataDirGuard(path.join(dir, "ext"), { ...options(runner(EXTERNAL_APFS)), locationFile: note });
+    fs.mkdirSync(path.join(dir, "ext"));
+    await external.init();
+    expect(readLocation(note)).toMatchObject({ dataDir: path.join(dir, "ext"), external: true, volumeName: "LocusSSD" });
+
+    const internal = new DataDirGuard(path.join(dir, "int"), {
+      ...options(runner({ df: "/dev/disk3s5 1 1 1 1% /System/Volumes/Data", diskutil: "diskutil-data.plist" })),
+      locationFile: note,
+    });
+    await internal.init();
+    expect(readLocation(note)).toMatchObject({ dataDir: path.join(dir, "int"), external: false });
   });
 
   it("isConnected() goes false when the marker vanishes (drive gone, or an empty ghost folder)", async () => {
@@ -286,10 +313,24 @@ describe("DataDirGuard", () => {
     expect(await g2.waitForReconnect(new AbortController().signal, 10)).toBe(true);
   });
 
-  it("reports free space against the threshold", async () => {
-    const low = new DataDirGuard(dir, options(runner(EXTERNAL_APFS), 5 * 1024 ** 3));
-    expect(low.hasEnoughSpace()).toBe(false);
-    const fine = new DataDirGuard(dir, options(runner(EXTERNAL_APFS)));
-    expect(fine.hasEnoughSpace()).toBe(true);
+  it("checkLimits: ok, then the cap, then the reserve -- from real numbers", async () => {
+    let used = 10 * 1024 ** 3;
+    let free = 96 * 1024 ** 3;
+    const guard = new DataDirGuard(dir, {
+      ...options(runner(EXTERNAL_APFS)),
+      capBytes: 100 * 1024 ** 3,
+      capMarginBytes: 0,
+      freeBytesOf: () => free,
+      usedBytesOf: () => used,
+    });
+    expect(guard.checkLimits()).toMatchObject({ ok: true, usedBytes: 10 * 1024 ** 3, capBytes: 100 * 1024 ** 3 });
+    used = 100 * 1024 ** 3;
+    const cap = guard.checkLimits();
+    expect(cap).toMatchObject({ ok: false, kind: "cap" });
+    used = 10 * 1024 ** 3;
+    free = 18.2 * 1024 ** 3;
+    const reserve = guard.checkLimits();
+    expect(reserve).toMatchObject({ ok: false, kind: "reserve" });
+    if (!reserve.ok) expect(reserve.message).toBe("Paused: low disk space. 18.2 GB free; Locus keeps 20.0 GB in reserve. Free some space on this Mac; indexing resumes on its own.");
   });
 });

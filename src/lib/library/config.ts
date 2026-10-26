@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { envWithFallback } from "../env";
 
 type Env = Record<string, string | undefined>;
 
@@ -52,9 +53,26 @@ export const DEFAULT_EXCLUDES = [
 
 export const DEFAULT_INCLUDES = ["**/*.pdf"];
 
+/**
+ * Where the library keeps its data when LOCUS_DATA_DIR isn't set: inside the
+ * project, under /data, which git and Vercel already ignore (and which
+ * next.config.ts keeps out of every build trace).
+ */
+export function defaultDataDir(): string {
+  // turbopackIgnore: a runtime path; without the hint Next's file tracer
+  // can't tell what it points at and traces the project (see indexDb.ts).
+  return path.resolve(/*turbopackIgnore: true*/ process.cwd(), "data/locus-data");
+}
+
 export interface LibraryConfig {
-  /** Everything the library writes goes under here. Must be an existing folder on an external drive. */
-  dataDir: string | null;
+  /** Everything the library writes goes under here: the laptop's disk by default, or an external drive. */
+  dataDir: string;
+  /** True when LOCUS_DATA_DIR wasn't set and dataDir is the default inside the project. */
+  dataDirIsDefault: boolean;
+  /** Cap on everything the library writes (LOCUS_LIBRARY_MAX_GB, default 100). */
+  maxBytes: number;
+  /** Folders a folder source may be read from (LOCUS_ALLOWED_ROOTS, default /Volumes). */
+  allowedRoots: string[];
   /** Folder source root (read in place, never written). */
   libraryDir: string | null;
   dbUrl: string | null;
@@ -77,6 +95,7 @@ export interface LibraryConfig {
   pageTimeoutMs: number;
   fileTimeoutMs: number;
   settleSeconds: number;
+  /** Free space always left on the disk (LOCUS_MIN_FREE_GB, default 20), even under the cap. */
   minFreeBytes: number;
   rescanMinutes: number;
   watch: boolean;
@@ -116,14 +135,36 @@ function optionalPath(env: Env, name: string): string | null {
   return raw ? path.resolve(raw) : null;
 }
 
+function allowedRootsFrom(env: Env): string[] {
+  const raw = env.LOCUS_ALLOWED_ROOTS;
+  const roots = raw === undefined || raw.trim() === "" ? ["/Volumes"] : raw.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const r of roots) {
+    if (!path.isAbsolute(r)) throw new Error(`LOCUS_ALLOWED_ROOTS entries must be absolute paths, got "${r}"`);
+  }
+  return roots.map((r) => path.resolve(r));
+}
+
+/** LOCUS_MIN_FREE_GB, or its earlier name LIBRARY_MIN_FREE_GB (with a one-time deprecation warning). */
+function minFreeGb(env: Env): number {
+  const raw = env === process.env ? envWithFallback("LOCUS_MIN_FREE_GB", "LIBRARY_MIN_FREE_GB") : (env.LOCUS_MIN_FREE_GB ?? env.LIBRARY_MIN_FREE_GB);
+  if (raw === undefined || raw.trim() === "") return 20;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`LOCUS_MIN_FREE_GB must be zero or more, got "${raw}"`);
+  return value;
+}
+
 export function loadLibraryConfig(env: Env = process.env): LibraryConfig {
+  const explicitDataDir = optionalPath(env, "LOCUS_DATA_DIR");
   const ocrPages = (env.LIBRARY_OCR_PAGES ?? "auto").trim();
   if (ocrPages !== "auto" && ocrPages !== "all") {
     throw new Error(`LIBRARY_OCR_PAGES must be "auto" or "all", got "${ocrPages}"`);
   }
   const concurrency = Math.floor(positive(env, "LIBRARY_CONCURRENCY", Math.max(1, os.availableParallelism() - 2)));
   return {
-    dataDir: optionalPath(env, "LOCUS_DATA_DIR"),
+    dataDir: explicitDataDir ?? defaultDataDir(),
+    dataDirIsDefault: explicitDataDir === null,
+    maxBytes: positive(env, "LOCUS_LIBRARY_MAX_GB", 100) * 1024 ** 3,
+    allowedRoots: allowedRootsFrom(env),
     libraryDir: optionalPath(env, "LOCUS_LIBRARY_DIR"),
     dbUrl: env.LIBRARY_DB_URL?.trim() || null,
     dbQuery: env.LIBRARY_DB_QUERY?.trim() || null,
@@ -141,7 +182,7 @@ export function loadLibraryConfig(env: Env = process.env): LibraryConfig {
     pageTimeoutMs: positive(env, "PAGE_TIMEOUT_MS", 120_000),
     fileTimeoutMs: positive(env, "LIBRARY_FILE_TIMEOUT_MS", 30 * 60 * 1000),
     settleSeconds: positive(env, "LIBRARY_SETTLE_SECONDS", 120),
-    minFreeBytes: positive(env, "LIBRARY_MIN_FREE_GB", 20) * 1024 ** 3,
+    minFreeBytes: minFreeGb(env) * 1024 ** 3,
     rescanMinutes: positive(env, "LIBRARY_RESCAN_MINUTES", 60),
     watch: flag(env, "LIBRARY_WATCH"),
     crossDevice: flag(env, "LIBRARY_CROSS_DEVICE"),
@@ -156,6 +197,8 @@ export interface LibraryPaths {
   dataDir: string;
   root: string;
   db: string;
+  /** The sources registry (written by the app's admin APIs, read by the indexer worker). */
+  sources: string;
   ocrCache: string;
   tmp: string;
   logs: string;
@@ -170,6 +213,7 @@ export function libraryPaths(dataDir: string): LibraryPaths {
     dataDir,
     root,
     db: path.join(root, "library.db"),
+    sources: path.join(root, "sources.db"),
     ocrCache: path.join(root, "ocr-cache.db"),
     tmp: path.join(root, "tmp"),
     logs: path.join(root, "logs"),

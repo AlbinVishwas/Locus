@@ -1,23 +1,32 @@
 import fs from "node:fs";
+import path from "node:path";
 import { libraryPaths, type LibraryPaths } from "../config";
+import { defaultMarginBytes, evaluateLimits, type LimitState } from "./limits";
+import { UsageMeter } from "./usage";
+import { isUnderVolumes, locationFilePath, type LibraryLocation } from "./location";
 import { checkDataDir, describeVolume, type RefusalReason, type Runner, type VolumeInfo } from "./volume";
 
 /**
- * Keeps every library write on the external drive LOCUS_DATA_DIR points at,
- * for as long as a run lasts:
+ * Keeps every library write inside the folder LOCUS_DATA_DIR points at, and
+ * inside its limits, for as long as a run lasts:
  *
- *   init()          the full volume check (volume.ts), then the marker file
- *                   `.locus-data-dir` recording that volume's UUID. A marker
- *                   from a different volume is refused: it means the folder
- *                   was copied, or a different drive is mounted at the same
- *                   path.
+ *   init()          the volume check (volume.ts), then -- for the default
+ *                   folder, or any folder not under /Volumes -- creating the
+ *                   folder, then the marker file `.locus-data-dir` recording
+ *                   that volume's UUID. A marker from a different volume is
+ *                   refused: the folder was copied, or a different drive is
+ *                   mounted at the same path. Also writes a small note in the
+ *                   app's own folder saying where the library lives and
+ *                   whether that's an external drive, so the app can say
+ *                   "drive not connected" only when it really means it.
  *   isConnected()   cheap, called before every write batch: the marker is
  *                   still there and still on the same device. An unplugged
  *                   drive fails this, and so does an empty /Volumes/<name>
  *                   folder macOS left behind (no marker in it).
  *   waitForReconnect()  polls until the full check passes again with the
  *                   same volume UUID.
- *   freeBytes()     statfs on the drive, for the low-space pause.
+ *   checkLimits()   the storage cap and free-space reserve (limits.ts), from
+ *                   real disk usage (usage.ts) and statfs.
  */
 
 export class StorageRefusedError extends Error {
@@ -37,10 +46,18 @@ interface Marker {
 
 export interface GuardOptions {
   allowExfat: boolean;
+  /** Free space to always leave on the disk. */
   minFreeBytes: number;
+  /** Cap on everything the library writes. Omitted: no cap (the inventory, which writes little). */
+  capBytes?: number;
+  capMarginBytes?: number;
   run?: Runner;
+  /** Where to record the library's location; null: don't (tests). Default: the app folder. */
+  locationFile?: string | null;
   /** Injectable for tests: free bytes on the volume holding `dir`. */
   freeBytesOf?: (dir: string) => number;
+  /** Injectable for tests: what the library is using right now. */
+  usedBytesOf?: () => number;
 }
 
 export function statfsFreeBytes(dir: string): number {
@@ -52,6 +69,7 @@ export class DataDirGuard {
   readonly paths: LibraryPaths;
   private markerDev: number | null = null;
   private volumeUuid: string | null = null;
+  private meter: UsageMeter | null = null;
   info: VolumeInfo | null = null;
   warnings: string[] = [];
 
@@ -68,6 +86,8 @@ export class DataDirGuard {
     this.info = verdict.info;
     this.warnings = verdict.warnings;
     this.volumeUuid = verdict.info.volumeUuid;
+    // Not under /Volumes (checkDataDir already refused a missing folder there).
+    if (!fs.existsSync(this.paths.dataDir)) fs.mkdirSync(this.paths.dataDir, { recursive: true });
 
     const existing = this.readMarker();
     if (existing && existing.volumeUuid !== this.volumeUuid) {
@@ -85,6 +105,26 @@ export class DataDirGuard {
     // Only ever inside the verified data dir -- never the data dir itself.
     for (const dir of [this.paths.root, this.paths.tmp, this.paths.logs, this.paths.inventory]) {
       fs.mkdirSync(dir, { recursive: true });
+    }
+    this.meter = new UsageMeter(this.paths);
+    this.writeLocation();
+  }
+
+  private writeLocation(): void {
+    const file = this.options.locationFile === undefined ? locationFilePath() : this.options.locationFile;
+    if (file === null || !this.info) return;
+    const location: LibraryLocation = {
+      dataDir: this.paths.dataDir,
+      external: isUnderVolumes(this.paths.dataDir) || this.info.internal === false,
+      volumeName: this.info.volumeName,
+      volumeUuid: this.volumeUuid,
+      at: new Date().toISOString(),
+    };
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(location, null, 2) + "\n");
+    } catch {
+      // The note only sharpens a message; never fail a run over it.
     }
   }
 
@@ -130,12 +170,21 @@ export class DataDirGuard {
     return (this.options.freeBytesOf ?? statfsFreeBytes)(this.paths.dataDir);
   }
 
-  hasEnoughSpace(): boolean {
-    return this.freeBytes() >= this.options.minFreeBytes;
+  usedBytes(): number {
+    if (this.options.usedBytesOf) return this.options.usedBytesOf();
+    return (this.meter ??= new UsageMeter(this.paths)).usedBytes();
   }
 
-  get minFreeBytes(): number {
-    return this.options.minFreeBytes;
+  /** The storage cap and the free-space reserve. Cheap enough to call before every write. */
+  checkLimits(): LimitState {
+    const capBytes = this.options.capBytes ?? Number.MAX_SAFE_INTEGER;
+    return evaluateLimits({
+      usedBytes: this.usedBytes(),
+      capBytes,
+      freeBytes: this.freeBytes(),
+      minFreeBytes: this.options.minFreeBytes,
+      marginBytes: this.options.capMarginBytes ?? (this.options.capBytes ? defaultMarginBytes(capBytes) : 0),
+    });
   }
 }
 

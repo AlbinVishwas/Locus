@@ -2,9 +2,11 @@
  * npm run index:library [-- --watch] [--retry-failed] [--status] [--sample N] [--seed S] [--concurrency N]
  *
  * Indexes the document library (LOCUS_LIBRARY_DIR and/or LIBRARY_DB_URL +
- * LIBRARY_DB_QUERY) into the library index on the external drive at
- * LOCUS_DATA_DIR. Refuses to start if LOCUS_DATA_DIR is unset, on the Mac's
- * internal disk, on a network drive, or on FAT32/exFAT (see
+ * LIBRARY_DB_QUERY) into the library index in LOCUS_DATA_DIR: this Mac's own
+ * disk by default (data/locus-data), or an external drive. The library may
+ * use at most LOCUS_LIBRARY_MAX_GB (100) and always leaves LOCUS_MIN_FREE_GB
+ * (20) free; at either limit it pauses, says so, deletes nothing, and
+ * resumes on its own. Refuses a network drive or FAT32/exFAT (see
  * src/lib/library/storage/volume.ts). Keeps the Mac awake (caffeinate),
  * runs at lowered priority, prints progress, and can be stopped with
  * Ctrl+C and rerun at any time: it picks up where it left off.
@@ -63,7 +65,11 @@ async function main() {
   if (arg("--seed")) config.sampleSeed = Number(arg("--seed"));
   if (arg("--concurrency")) config.concurrency = Number(arg("--concurrency"));
 
-  const guard = new DataDirGuard(config.dataDir, { allowExfat: config.allowExfat, minFreeBytes: config.minFreeBytes });
+  const guard = new DataDirGuard(config.dataDir, {
+    allowExfat: config.allowExfat,
+    minFreeBytes: config.minFreeBytes,
+    capBytes: config.maxBytes,
+  });
   try {
     await guard.init();
   } catch (err) {

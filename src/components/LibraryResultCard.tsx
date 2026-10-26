@@ -31,8 +31,6 @@ export default function LibraryResultCard({ response, failure }: { response?: Li
   switch (response.status) {
     case "disconnected":
       return <Notice title="Library drive not connected">Plug in the library drive; searches include the library again as soon as it&apos;s back.</Notice>;
-    case "unconfigured":
-      return <Notice title="Library not set up">This server has no library configured (LOCUS_DATA_DIR).</Notice>;
     case "empty":
       return <Notice title="Library is empty">Nothing in the library has been indexed yet.</Notice>;
     case "too-short":

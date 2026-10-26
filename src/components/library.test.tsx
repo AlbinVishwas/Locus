@@ -77,7 +77,6 @@ describe("LibraryResultCard", () => {
 
   it("has a plain message for every way a library search comes back empty", () => {
     expect(card({ response: { status: "disconnected" } })).toContain("Library drive not connected");
-    expect(card({ response: { status: "unconfigured" } })).toContain("Library not set up");
     expect(card({ response: { status: "empty" } })).toContain("Nothing in the library has been indexed yet");
     expect(card({ response: { status: "too-short", query: "ab" } })).toContain("Type at least 3 characters");
     expect(card({ failure: "Library search failed (500)" })).toContain("Library search failed");
@@ -113,11 +112,10 @@ describe("LibraryBar", () => {
   });
 
   it("status line text: documents, pages, still indexing, not indexed, drive connected or not", () => {
-    expect(statusText({ configured: true, connected: true, documents: 48210, pagesIndexed: 2104332, indexing: 312, failed: 14 })).toBe(
+    expect(statusText({ connected: true, documents: 48210, pagesIndexed: 2104332, indexing: 312, failed: 14 })).toBe(
       "Library: 48,210 documents · 2,104,332 pages indexed · 312 still indexing · 14 not indexed · drive connected"
     );
-    expect(statusText({ configured: true, connected: false, documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 })).toBe("Library drive not connected");
-    expect(statusText({ configured: false, connected: false, documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 })).toBe("Library not set up on this server");
+    expect(statusText({ connected: false, documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 })).toBe("Library drive not connected");
   });
 });
 

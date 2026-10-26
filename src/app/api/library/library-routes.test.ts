@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { _resetLibraryDbForTests } from "@/lib/library/db";
+import { defaultDataDir } from "@/lib/library/config";
+import { _resetLibraryDbForTests, libraryDataDir } from "@/lib/library/db";
 import { buildLibraryIndex } from "@/lib/library/testing/libraryIndex";
 import type { LibrarySearchResponse, LibraryStatus } from "@/lib/libraryClient";
 import { POST as search } from "./search/route";
@@ -14,14 +15,26 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "locus-library-routes-"));
   process.env.LOCUS_LIBRARY_ENABLED = "true";
   process.env.LOCUS_DATA_DIR = dir;
+  process.env.LOCUS_APP_DIR = path.join(dir, "..", `app-${path.basename(dir)}`);
 });
 
 afterEach(() => {
   _resetLibraryDbForTests();
   delete process.env.LOCUS_LIBRARY_ENABLED;
   delete process.env.LOCUS_DATA_DIR;
+  fs.rmSync(process.env.LOCUS_APP_DIR!, { recursive: true, force: true });
+  delete process.env.LOCUS_APP_DIR;
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/** What the indexer records at start-up: where the library lives and whether that's an external drive. */
+function noteLocation(external: boolean) {
+  fs.mkdirSync(process.env.LOCUS_APP_DIR!, { recursive: true });
+  fs.writeFileSync(
+    path.join(process.env.LOCUS_APP_DIR!, "library-location.json"),
+    JSON.stringify({ dataDir: dir, external, volumeName: null, volumeUuid: null, at: "x" })
+  );
+}
 
 async function post(body: unknown): Promise<{ status: number; json: LibrarySearchResponse | null; text: string }> {
   const res = await search(new Request("http://localhost/api/library/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
@@ -91,29 +104,41 @@ describe("library routes", () => {
 
   it("status: counts documents, pages, indexing and failures; connected", async () => {
     sample();
-    expect((await getStatus()).body).toEqual({ configured: true, connected: true, documents: 2, pagesIndexed: 3, indexing: 0, failed: 0 });
+    expect((await getStatus()).body).toEqual({ connected: true, documents: 2, pagesIndexed: 3, indexing: 0, failed: 0 });
   });
 
-  it("drive not connected (marker gone): search and status say so instead of failing; back when it returns", async () => {
+  it("external drive not connected (marker gone): search and status say so instead of failing; back when it returns", async () => {
     sample();
+    noteLocation(true);
     expect((await post({ message: "ocelot" })).json?.status).toBe("ok");
     const marker = path.join(dir, ".locus-data-dir");
     fs.renameSync(marker, `${marker}.away`);
     expect((await post({ message: "ocelot" })).json).toEqual({ status: "disconnected" });
-    expect((await getStatus()).body).toMatchObject({ configured: true, connected: false });
+    expect((await getStatus()).body).toMatchObject({ connected: false });
     fs.renameSync(`${marker}.away`, marker);
     expect((await post({ message: "ocelot" })).json?.status).toBe("ok");
     expect((await getStatus()).body).toMatchObject({ connected: true, documents: 2 });
   });
 
-  it("unconfigured (LOCUS_DATA_DIR unset) and empty (nothing indexed yet) are their own answers", async () => {
+  it("a library on this Mac's own disk has no drive to unplug: a missing marker just means nothing is indexed yet", async () => {
+    sample();
+    noteLocation(false);
+    fs.rmSync(path.join(dir, ".locus-data-dir"));
+    expect((await post({ message: "ocelot" })).json).toEqual({ status: "empty" });
+    expect((await getStatus()).body).toEqual({ connected: true, documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 });
+  });
+
+  it("with LOCUS_DATA_DIR unset, the app looks in the default folder inside the project", () => {
     delete process.env.LOCUS_DATA_DIR;
-    expect((await post({ message: "ocelot" })).json).toEqual({ status: "unconfigured" });
-    expect((await getStatus()).body).toMatchObject({ configured: false, connected: false });
-    process.env.LOCUS_DATA_DIR = dir;
+    expect(libraryDataDir()).toBe(defaultDataDir());
+    process.env.LOCUS_DATA_DIR = "/somewhere/else";
+    expect(libraryDataDir()).toBe("/somewhere/else");
+  });
+
+  it("empty (index folder exists, nothing indexed yet) is its own answer", async () => {
     fs.writeFileSync(path.join(dir, ".locus-data-dir"), "{}");
     expect((await post({ message: "ocelot" })).json).toEqual({ status: "empty" });
-    expect((await getStatus()).body).toEqual({ configured: true, connected: true, documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 });
+    expect((await getStatus()).body).toEqual({ connected: true, documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 });
   });
 
   it("too-short queries get their own answer", async () => {

@@ -7,7 +7,7 @@ import type { LibrarySearchResult } from "./library/query";
  */
 
 /** Why a library search didn't produce results, when it didn't. */
-export type LibraryUnavailable = "disconnected" | "empty" | "unconfigured";
+export type LibraryUnavailable = "disconnected" | "empty";
 
 export type LibrarySearchResponse =
   | { status: "ok"; result: LibrarySearchResult }
@@ -15,7 +15,6 @@ export type LibrarySearchResponse =
   | { status: LibraryUnavailable };
 
 export interface LibraryStatus {
-  configured: boolean;
   connected: boolean;
   documents: number;
   pagesIndexed: number;

@@ -19,7 +19,6 @@ const n = (x: number) => x.toLocaleString("en-US");
 
 export function statusText(s: LibraryStatus | null): string {
   if (s === null) return "Library: checking…";
-  if (!s.configured) return "Library not set up on this server";
   if (!s.connected) return "Library drive not connected";
   return (
     `Library: ${n(s.documents)} ${s.documents === 1 ? "document" : "documents"} · ${n(s.pagesIndexed)} pages indexed · ` +
@@ -51,7 +50,7 @@ function LibraryControls({ fallback, className }: { fallback: SearchScope; class
     };
   }, []);
 
-  const disconnected = status !== null && (!status.configured || !status.connected);
+  const disconnected = status !== null && !status.connected;
   return (
     <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[12px] text-secondary ${className}`}>
       <div role="radiogroup" aria-label="Search in" className="inline-flex rounded-full border border-line p-0.5">

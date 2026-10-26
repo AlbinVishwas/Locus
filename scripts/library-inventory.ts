@@ -31,7 +31,7 @@ async function main() {
   const sampleSize = sampleIdx >= 0 ? Number(process.argv[sampleIdx + 1]) : 300;
   if (!config.libraryDir) fail("Set LOCUS_LIBRARY_DIR to the folder to inventory.");
 
-  const guard = new DataDirGuard(config.dataDir, { allowExfat: config.allowExfat, minFreeBytes: 0 });
+  const guard = new DataDirGuard(config.dataDir, { allowExfat: config.allowExfat, minFreeBytes: config.minFreeBytes, capBytes: config.maxBytes });
   try {
     await guard.init();
   } catch (err) {

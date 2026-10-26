@@ -10,6 +10,7 @@ import { claimJobs, completeJob, deferJob, enqueueJobs, jobCounts, resetRunningJ
 import type { FailureKind } from "./schema";
 import { SourceFileError, StillChangingError, type LibrarySource, type SourceEntry } from "./sources/types";
 import { sleep } from "./storage/guard";
+import { limitStateLabel, type LimitState } from "./storage/limits";
 import {
   beginDocument,
   clearFailure,
@@ -60,12 +61,18 @@ export interface GuardLike {
   isConnected(): boolean;
   verifyConnected(): Promise<boolean>;
   waitForReconnect(signal: AbortSignal, intervalMs?: number, onWait?: () => void): Promise<boolean>;
-  freeBytes(): number;
-  hasEnoughSpace(): boolean;
-  readonly minFreeBytes: number;
+  /** The storage cap and the free-space reserve. */
+  checkLimits(): LimitState;
 }
 
-export type IndexerState = "starting" | "running" | "paused: low disk space" | "paused: library drive not connected" | "stopping" | "done";
+export type IndexerState =
+  | "starting"
+  | "running"
+  | "paused: storage limit"
+  | "paused: low disk space"
+  | "paused: library drive not connected"
+  | "stopping"
+  | "done";
 
 export interface FailureEvent {
   at: string;
@@ -111,6 +118,10 @@ export interface Progress {
   ocrRun: number;
   ocrCached: number;
   freeBytes: number | null;
+  usedBytes: number | null;
+  capBytes: number | null;
+  /** The limit currently pausing indexing, or null. */
+  limit: Extract<LimitState, { ok: false }> | null;
   /** Pages finished in the last 60 s, with timestamps, for a rolling rate. */
   recentPages: Array<[number, number]>;
 }
@@ -154,6 +165,7 @@ export class LibraryIndexer {
   private readonly sourcesById: Map<string, LibrarySource>;
   private readonly now: () => number;
   private paused: Promise<void> | null = null;
+  private pausedFor: "disconnect" | "limit" | null = null;
   private stopped = false;
   private stopController = new AbortController();
   private fileControllers = new Set<AbortController>();
@@ -185,6 +197,9 @@ export class LibraryIndexer {
       ocrRun: 0,
       ocrCached: 0,
       freeBytes: null,
+      usedBytes: null,
+      capBytes: null,
+      limit: null,
       recentPages: [],
     };
   }
@@ -242,6 +257,7 @@ export class LibraryIndexer {
   /** Drive gone: stop everything, close the index, wait for the same drive, check the index, resume. */
   private onDisconnect(): Promise<void> {
     if (this.paused) return this.paused;
+    this.pausedFor = "disconnect";
     this.progress.state = "paused: library drive not connected";
     this.log("Library drive not connected. Stopped safely; waiting for it to come back…");
     for (const c of this.fileControllers) c.abort();
@@ -263,22 +279,75 @@ export class LibraryIndexer {
     return this.paused;
   }
 
-  private async onLowSpace(): Promise<void> {
+  /**
+   * Checks the storage cap and the free-space reserve, records the numbers
+   * for the status line, and -- if either is hit -- pauses everything.
+   * Cheap (a few stats and one statfs), so it runs before every claim and
+   * before every big write, plus on a timer.
+   */
+  private enforceLimits(): LimitState | null {
+    let state: LimitState;
+    try {
+      state = this.o.guard.checkLimits();
+    } catch {
+      return null; // the drive may be gone; the connection checks handle that
+    }
+    this.progress.usedBytes = state.usedBytes;
+    this.progress.capBytes = state.capBytes;
+    this.progress.freeBytes = state.freeBytes;
+    if (!state.ok && !this.paused && !this.stopped) void this.onLimit(state);
+    return state;
+  }
+
+  /**
+   * A limit was hit. Workers stop claiming, in-flight files stop at their
+   * next checkpoint (their jobs go back to pending: redoing a file replaces
+   * whatever partial content it left, and the OCR cache avoids repeating
+   * OCR), temp files go with them -- and NOTHING else is deleted to make
+   * room. Resumes by itself once usage is back under the cap and the disk is
+   * back above the reserve. Search keeps working throughout (the app only
+   * reads the index).
+   */
+  private onLimit(first: Extract<LimitState, { ok: false }>): Promise<void> {
     if (this.paused) return this.paused;
-    const free = this.o.guard.freeBytes();
-    this.progress.state = "paused: low disk space";
-    this.log(
-      `Paused: low disk space on the library drive (${(free / 1024 ** 3).toFixed(1)} GB free, need ${(this.o.guard.minFreeBytes / 1024 ** 3).toFixed(1)} GB). ` +
-        `Free some space; indexing resumes on its own.`
-    );
+    this.pausedFor = "limit";
+    this.progress.state = limitStateLabel(first.kind);
+    this.progress.limit = first;
+    this.log(first.message);
+    for (const c of this.fileControllers) c.abort();
     this.paused = (async () => {
-      while (!this.stopped && !this.o.guard.hasEnoughSpace()) await sleep(this.o.spaceCheckMs ?? 30_000, this.stopController.signal);
-      if (!this.stopped) {
-        this.log("Enough free space again. Resuming.");
-        this.progress.state = "running";
+      let lastReminder = this.now();
+      for (;;) {
+        await sleep(this.o.spaceCheckMs ?? 30_000, this.stopController.signal);
+        if (this.stopped) return;
+        let state: LimitState;
+        try {
+          state = this.o.guard.checkLimits();
+        } catch {
+          continue; // drive trouble: the next write notices and handles it
+        }
+        this.progress.usedBytes = state.usedBytes;
+        this.progress.capBytes = state.capBytes;
+        this.progress.freeBytes = state.freeBytes;
+        if (state.ok) break;
+        this.progress.state = limitStateLabel(state.kind);
+        this.progress.limit = state;
+        if (this.now() - lastReminder > 5 * 60_000) {
+          this.log(state.message);
+          lastReminder = this.now();
+        }
       }
+      try {
+        const redo = resetRunningJobs(this.requireDb());
+        this.log(`Back under the limits. Resuming (${redo} file(s) to redo).`);
+      } catch {
+        // index closed (stopping)
+      }
+      this.progress.state = "running";
+      this.progress.limit = null;
     })().finally(() => {
       this.paused = null;
+      this.pausedFor = null;
     });
     return this.paused;
   }
@@ -308,12 +377,8 @@ export class LibraryIndexer {
       this.emptyTempDir();
       this.progress.state = "running";
 
-      const spaceTimer = setInterval(() => {
-        this.progress.freeBytes = this.o.guard.freeBytes();
-        if (!this.o.guard.hasEnoughSpace() && !this.paused && !this.stopped) void this.onLowSpace();
-      }, this.o.spaceCheckMs ?? 30_000);
-      this.progress.freeBytes = this.o.guard.freeBytes();
-      if (!this.o.guard.hasEnoughSpace()) void this.onLowSpace();
+      const spaceTimer = setInterval(() => void this.enforceLimits(), this.o.spaceCheckMs ?? 30_000);
+      this.enforceLimits();
 
       try {
         do {
@@ -566,8 +631,14 @@ export class LibraryIndexer {
       }
       let job: Job | undefined;
       try {
+        const limits = this.enforceLimits();
+        if (limits && !limits.ok) {
+          await this.checkpoint(); // waits out the pause (or throws if stopping)
+          continue;
+        }
         job = this.write((db) => claimJobs(db, 1)[0]);
       } catch (err) {
+        if (this.stopped) return;
         if (err instanceof Disconnected) {
           await this.onDisconnect().catch((e) => this.log(String(e)));
           continue;
@@ -621,6 +692,14 @@ export class LibraryIndexer {
 
     const controller = new AbortController();
     this.fileControllers.add(controller);
+    // Waits out a pause -- but a file a pause released (its controller was
+    // aborted) must not carry on afterwards holding its temp files: it stops
+    // here, cleans up, and is redone when the pause ends.
+    const hold = async () => {
+      if (controller.signal.aborted) throw new Error("released by a pause");
+      await this.checkpoint();
+      if (controller.signal.aborted) throw new Error("released by a pause");
+    };
     const fileTmp = fs.mkdtempSync(path.join(this.paths.tmp, "file-"));
     const entry: SourceEntry = {
       key: job.key,
@@ -658,7 +737,7 @@ export class LibraryIndexer {
     try {
       opened = await source.open(entry, fileTmp, controller.signal);
       const file = opened;
-      await this.checkpoint();
+      await hold();
 
       const known = this.write((db) => knownDocuments(db, job.sourceId, [job.key]).get(job.key));
       if (known && known.sha256 === file.sha256 && known.settings === this.settings && known.status === "ready") {
@@ -712,7 +791,8 @@ export class LibraryIndexer {
       const stats = { ocrRun: 0, ocrCached: 0 };
       let buffer: ExtractedPage[] = [];
       const flushPages = async (pages: ExtractedPage[]) => {
-        await this.checkpoint();
+        this.enforceLimits();
+        await hold();
         this.write((db) => writePages(db, docId!, pages));
         this.progress.pagesDone += pages.length;
         this.progress.recentPages.push([this.now(), pages.length]);
@@ -738,7 +818,7 @@ export class LibraryIndexer {
           await flushPages(chunk);
         }
       }
-      await this.checkpoint();
+      await hold();
       const last = buffer;
       this.write((db) =>
         db.transaction(() => {
@@ -756,12 +836,19 @@ export class LibraryIndexer {
       this.progress.ocrCached += stats.ocrCached;
       this.progress.filesIndexed++;
     } catch (err) {
-      if (err instanceof Disconnected || (controller.signal.aborted && this.paused)) {
-        // Not an outcome: the job stays 'running' and is redone after the reconnect.
+      if (this.stopped) return; // not an outcome: redone next run
+      if (controller.signal.aborted) {
+        // Released by a pause (a storage limit, or the drive going away): not
+        // an outcome. The job stays 'running' and is redone when the pause
+        // ends. Returns at once so this file's temp files are removed now
+        // (the worker loop then waits out the pause).
+        return;
+      }
+      if (err instanceof Disconnected) {
+        // The drive went away under this write: stop everything and wait for it.
         await this.onDisconnect().catch((e) => this.log(String(e)));
         return;
       }
-      if (this.stopped) return; // likewise redone next run
       try {
         if (err instanceof StillChangingError) {
           const retryAt = new Date(this.now() + this.o.config.settleSeconds * 1000).toISOString();
