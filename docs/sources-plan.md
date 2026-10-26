@@ -971,13 +971,10 @@ or `sources.db` is traced into a build), `e2e`, `e2e:chat`, `e2e:library`
 
 ---
 
-## 13. Questions for you
+## 13. Decisions (all settled)
 
-Settled: separate worker process; users search only their own uploads (admin
-also searches the library); self-registration; search text stored.
-
-1. **Sign-up gate:** require the sign-up code (my default, since the link is
-   public), or let anyone who finds the link register (`LOCUS_SIGNUP=open`)?
-2. **Allowed roots** (see the explanation in the conversation): `/Volumes` only
-   by default, with folders added through `LOCUS_ALLOWED_ROOTS` (my
-   recommendation), or also allow the project's `data/` folder by default?
+Separate worker process; users search only their own uploads (admin also
+searches the library); self-registration **gated by a sign-up code** (only people
+you invite can register); search text stored; allowed roots = `/Volumes` only
+(folders are added with `LOCUS_ALLOWED_ROOTS`); admin sign-in works through the
+tunnel (`LOCUS_ADMIN_LOCAL_ONLY` optional). Phase B is building these.
