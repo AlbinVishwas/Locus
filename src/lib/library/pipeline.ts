@@ -88,12 +88,20 @@ export interface FailureEvent {
   message: string | null;
 }
 
+export interface IndexerEvent {
+  kind: "indexer_paused" | "indexer_resumed" | "indexer_error";
+  message: string;
+  source?: string;
+}
+
 export interface PipelineOptions {
   config: LibraryConfig;
   guard: GuardLike;
   sources: LibrarySource[];
   log?: (line: string) => void;
   onFailure?: (event: FailureEvent) => void;
+  /** Things the administrator should be able to look back on: a storage pause, its end, a source in trouble. */
+  onEvent?: (event: IndexerEvent) => void;
   retryFailed?: boolean;
   /** Test hooks. */
   openDb?: (file: string) => Database.Database;
@@ -356,6 +364,7 @@ export class LibraryIndexer {
     this.progress.state = limitStateLabel(first.kind);
     this.progress.limit = first;
     this.log(first.message);
+    this.o.onEvent?.({ kind: "indexer_paused", message: first.message });
     for (const c of this.fileControllers.keys()) c.abort();
     this.paused = (async () => {
       let lastReminder = this.now();
@@ -382,6 +391,7 @@ export class LibraryIndexer {
       try {
         const redo = resetRunningJobs(this.requireDb());
         this.log(`Back under the limits. Resuming (${redo} file(s) to redo).`);
+        this.o.onEvent?.({ kind: "indexer_resumed", message: "back under the storage limits" });
       } catch {
         // index closed (stopping)
       }
@@ -501,7 +511,10 @@ export class LibraryIndexer {
       if (this.lastErrors.get(s.id) !== s.error) {
         setSourceError(db, s.id, s.error);
         this.lastErrors.set(s.id, s.error);
-        if (s.error) this.log(`${s.name}: ${s.error}`);
+        if (s.error) {
+          this.log(`${s.name}: ${s.error}`);
+          this.o.onEvent?.({ kind: "indexer_error", message: s.error, source: s.name });
+        }
       }
       if (s.source) sources.set(s.id, s.source);
       if (s.state === "active" && s.source) nextActive.add(s.id);
@@ -822,6 +835,7 @@ export class LibraryIndexer {
       } else {
         abortedReason = err instanceof Error ? err.message : String(err);
         this.log(`Scan of ${source.label} failed: ${abortedReason}`);
+        this.o.onEvent?.({ kind: "indexer_error", message: `scan failed: ${abortedReason}`, source: source.label });
         // Shown on the source ("Error: ...") until a scan next succeeds.
         try {
           this.write((db) => setSourceError(db, source.id, abortedReason!));

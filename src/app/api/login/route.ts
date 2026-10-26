@@ -9,7 +9,25 @@ import {
   sessionTtlMs,
 } from "@/lib/auth";
 
+import { signIn } from "@/lib/users/signin";
+import { signupCode, signupMode, usersEnabled } from "@/lib/users/mode";
+
 const MAX_PASSCODE_CHARS = 200;
+
+/** Users mode: a username and a passcode, checked against the account (or the admin passcode for "admin"). */
+async function usersLogin(req: Request): Promise<Response> {
+  let body: { username?: unknown; passcode?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return Response.json({ ok: false, error: "Invalid request" }, { status: 400 });
+  }
+  const outcome = await signIn(req, body ?? {});
+  if (!outcome.ok) return Response.json({ ok: false, error: outcome.error }, { status: outcome.status });
+  const res = Response.json({ ok: true, role: outcome.user.role });
+  res.headers.append("Set-Cookie", outcome.cookie);
+  return res;
+}
 
 /** Best-effort caller identity for rate limiting; a shared string if none is sent. */
 function clientKey(req: Request): string {
@@ -17,7 +35,21 @@ function clientKey(req: Request): string {
   return forwarded?.split(",")[0]?.trim() || "unknown";
 }
 
+/** What the sign-in page needs to know: one shared passcode (as always), or named users, and whether people can sign up. */
+export async function GET() {
+  if (!usersEnabled()) return Response.json({ usersEnabled: false }, { headers: { "Cache-Control": "no-store" } });
+  let signup: "code" | "open" | "off" = "off";
+  try {
+    signup = signupMode();
+    if (signup === "code" && signupCode() === null) signup = "off";
+  } catch {
+    signup = "off";
+  }
+  return Response.json({ usersEnabled: true, signup }, { headers: { "Cache-Control": "no-store" } });
+}
+
 export async function POST(req: Request) {
+  if (usersEnabled()) return usersLogin(req);
   const key = clientKey(req);
   if (isRateLimited(key)) {
     return Response.json(

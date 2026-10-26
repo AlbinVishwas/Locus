@@ -26,6 +26,11 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [passcode, setPasscode] = useState("");
+  // null until /api/login says whether this server uses named accounts.
+  const [mode, setMode] = useState<LoginMode | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [username, setUsername] = useState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const stuckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -36,16 +41,32 @@ function LoginForm() {
     };
   }, []);
 
+  useEffect(() => {
+    let live = true;
+    fetch("/api/login")
+      .then((r) => (r.ok ? (r.json() as Promise<LoginMode>) : { usersEnabled: false as const }))
+      .catch(() => ({ usersEnabled: false as const }))
+      .then((m) => live && setMode(m));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const users = mode?.usersEnabled === true;
+  const canCreate = users && mode.signup !== "off";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
 
     try {
-      const res = await fetch("/api/login", {
+      const res = await fetch(users && creating ? "/api/signup" : "/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ passcode }),
+        body: JSON.stringify(
+          !users ? { passcode } : creating ? { username, passcode, ...(mode.signup === "code" ? { code } : {}) } : { username, passcode }
+        ),
       });
 
       let body: { ok: boolean; error?: string };
@@ -80,6 +101,12 @@ function LoginForm() {
     }
   };
 
+  const input =
+    "rounded-lg border border-line bg-page px-3 py-2 text-[13px] text-primary outline-none focus:border-secondary";
+  const ready = !users
+    ? passcode.length > 0
+    : username.length > 0 && passcode.length > 0 && (!creating || mode.signup !== "code" || code.length > 0);
+
   return (
     <div className="flex h-dvh items-center justify-center bg-page px-4">
       <form
@@ -88,28 +115,85 @@ function LoginForm() {
       >
         <div>
           <h1 className="text-[15px] font-medium text-primary">Locus</h1>
-          <p className="mt-1 text-[13px] text-secondary">Enter the passcode to continue.</p>
+          <p className="mt-1 text-[13px] text-secondary">
+            {mode === null
+              ? "\u00a0"
+              : !users
+                ? "Enter the passcode to continue."
+                : creating
+                  ? "Create an account."
+                  : "Sign in to continue."}
+          </p>
         </div>
 
-        <input
-          type="password"
-          autoFocus
-          value={passcode}
-          onChange={(e) => setPasscode(e.target.value)}
-          placeholder="Passcode"
-          className="rounded-lg border border-line bg-page px-3 py-2 text-[13px] text-primary outline-none focus:border-secondary"
-        />
+        {mode !== null && (
+          <>
+            {users && (
+              <input
+                type="text"
+                autoFocus
+                autoComplete="username"
+                autoCapitalize="none"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Username"
+                className={input}
+              />
+            )}
+            <input
+              type="password"
+              autoFocus={!users}
+              autoComplete={creating ? "new-password" : "current-password"}
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              placeholder={creating ? "Choose a passcode (8+ characters)" : "Passcode"}
+              className={input}
+            />
+            {users && creating && mode.signup === "code" && (
+              <input
+                type="password"
+                autoComplete="off"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="Sign-up code"
+                className={input}
+              />
+            )}
+          </>
+        )}
 
         {error && <p className="text-[13px] text-red-400">{error}</p>}
 
         <button
           type="submit"
-          disabled={submitting || passcode.length === 0}
+          disabled={submitting || mode === null || !ready}
           className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {submitting ? "Checking…" : "Continue"}
+          {submitting ? "Checking…" : creating ? "Create account" : "Continue"}
         </button>
+
+        {users && (
+          <>
+            {canCreate && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCreating((c) => !c);
+                  setError(null);
+                }}
+                className="cursor-pointer text-left text-[13px] text-secondary hover:text-primary"
+              >
+                {creating ? "I already have an account" : "Create an account"}
+              </button>
+            )}
+            <p className="text-[12px] leading-snug text-secondary">
+              Searches are logged for the administrator.
+            </p>
+          </>
+        )}
       </form>
     </div>
   );
 }
+
+type LoginMode = { usersEnabled: false } | { usersEnabled: true; signup: "code" | "open" | "off" };

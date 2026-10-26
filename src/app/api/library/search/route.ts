@@ -1,4 +1,10 @@
 import { extractQuotedText } from "@/lib/chat/documentSearch";
+import { logActivity } from "@/lib/records/activity";
+import { getRecordsDb } from "@/lib/records/db";
+import { activityFor, requireAdmin } from "@/lib/session";
+import type { SessionUser } from "@/lib/users/signin";
+import { usersEnabled } from "@/lib/users/mode";
+import type { LibrarySearchResult } from "@/lib/library/query";
 import { getLibraryDb, libraryErrorStatus } from "@/lib/library/db";
 import { librarySearch } from "@/lib/library/query";
 import type { LibrarySearchResponse } from "@/lib/libraryClient";
@@ -7,6 +13,10 @@ import type { LibrarySearchResponse } from "@/lib/libraryClient";
 export const runtime = "nodejs";
 
 const MAX_MESSAGE_CHARS = 20_000;
+
+function emptyResult(query: string, mode: "exact" | "loose", cursor: number): LibrarySearchResult {
+  return { query, mode, prepared: "", hits: [], nextCursor: null, counts: cursor === 0 ? { pages: 0, documents: 0, complete: true } : null, looseCount: null, limit: 50, tookMs: 0 };
+}
 
 /**
  * Searches the document library. 404 unless LOCUS_LIBRARY_ENABLED=true --
@@ -22,8 +32,15 @@ const MAX_MESSAGE_CHARS = 20_000;
 export async function POST(req: Request) {
   const conn = getLibraryDb();
   if (conn.status === "disabled") return new Response("Not found", { status: 404 });
+  // Users mode: the library belongs to the admin; everyone else searches only their own uploads.
+  let admin: SessionUser | null = null;
+  if (usersEnabled()) {
+    const gate = await requireAdmin(req);
+    if (!gate.ok) return gate.response;
+    admin = gate.user;
+  }
 
-  let body: { message?: unknown; query?: unknown; mode?: unknown; cursor?: unknown };
+  let body: { message?: unknown; query?: unknown; mode?: unknown; cursor?: unknown; source?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -47,14 +64,36 @@ export async function POST(req: Request) {
   const json = (r: LibrarySearchResponse) => Response.json(r, { headers: { "Cache-Control": "no-store" } });
   if (conn.status !== "ok") return json({ status: conn.status });
 
+  // One source, by its id; unknown ids simply have no results.
+  let sourceOrdinal: number | undefined;
+  let scope = "all-sources";
+  if (body.source !== undefined) {
+    if (typeof body.source !== "string" || body.source.length > 200) return new Response("`source` must be a source id", { status: 400 });
+    const row = conn.db.prepare("SELECT ordinal, coalesce(name, kind) AS name FROM sources WHERE id = ?").get(body.source) as { ordinal: number | null; name: string } | undefined;
+    if (!row) return json({ status: "ok", result: emptyResult(text, mode, cursor) });
+    sourceOrdinal = row.ordinal ?? 0;
+    scope = `source:${row.name}`;
+  }
+
   const query = isPage ? text.trim() : (extractQuotedText(text) ?? text).trim();
+  const started = performance.now();
+  const record = (a: { pages?: number; documents?: number; status?: "ok" | "error"; message?: string }) => {
+    if (!admin) return;
+    logActivity(getRecordsDb(), activityFor(req, admin, { kind: a.status === "error" ? "search_failed" : isPage ? "search_more" : "search", scope, queryText: query, resultPages: a.pages ?? null, resultDocuments: a.documents ?? null, tookMs: performance.now() - started, status: a.status ?? "ok", message: a.message ?? null }));
+  };
   try {
-    const outcome = librarySearch(conn.db, query, { mode, cursor });
+    const outcome = librarySearch(conn.db, query, { mode, cursor, sourceOrdinal });
+    if (outcome.status === "ok") record({ pages: outcome.result.counts?.pages, documents: outcome.result.counts?.documents });
+    else record({ message: outcome.status });
     return json(outcome);
   } catch (err) {
-    if (libraryErrorStatus(err) === "disconnected") return json({ status: "disconnected" });
-    // The query itself is never logged: it may quote a client document.
+    if (libraryErrorStatus(err) === "disconnected") {
+      record({ status: "error", message: "library drive not connected" });
+      return json({ status: "disconnected" });
+    }
+    // The query itself stays out of the server log (it may quote a client document); the admin's activity log has it.
     console.error("[/api/library/search] search failed", { error: err instanceof Error ? err.message : err });
+    record({ status: "error", message: err instanceof Error ? err.message : "search failed" });
     return new Response("Library search failed. See the server log for details.", { status: 500 });
   }
 }

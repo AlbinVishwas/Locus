@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getStorageInfo, type StorageInfo } from "@/lib/uploadsClient";
 import { useConversations } from "./ConversationsProvider";
@@ -16,7 +17,7 @@ const MOBILE_QUERY = "(max-width: 767px)";
 
 export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   const router = useRouter();
-  const { chatEnabled } = useFeatures();
+  const { chatEnabled, usersEnabled, username, isAdmin, libraryEnabled } = useFeatures();
   const {
     conversations,
     activeConversationId,
@@ -113,6 +114,16 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
         <div className="border-t border-line p-3">
           <StorageCard />
+          {isAdmin && (
+            <div className="mb-1 flex flex-col">
+              {libraryEnabled && <AdminLink href="/sources">Sources</AdminLink>}
+              <AdminLink href="/users">Users</AdminLink>
+              <AdminLink href="/activity">Activity</AdminLink>
+            </div>
+          )}
+          {usersEnabled && username && (
+            <p className="truncate px-2.5 pb-1 text-[12px] text-secondary">Signed in as {username}</p>
+          )}
           <button
             type="button"
             onClick={handleLogout}
@@ -123,6 +134,14 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
       </aside>
     </>
+  );
+}
+
+function AdminLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link href={href} className="rounded-lg px-2.5 py-2 text-[13px] text-secondary hover:bg-surface-hover">
+      {children}
+    </Link>
   );
 }
 

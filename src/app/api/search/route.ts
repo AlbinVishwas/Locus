@@ -1,3 +1,5 @@
+import { requireAdmin } from "@/lib/session";
+import { usersEnabled } from "@/lib/users/mode";
 import { getIndexDb, IndexUnavailableError } from "@/lib/search/indexDb";
 import { search } from "@/lib/search/query";
 import { MAX_BODY_BYTES, validateSearchRequest } from "@/lib/search/searchRequest";
@@ -17,6 +19,11 @@ import { MAX_BODY_BYTES, validateSearchRequest } from "@/lib/search/searchReques
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  // Users mode: this searches the standalone tender corpus, which isn't anyone's upload -- admin only.
+  if (usersEnabled()) {
+    const gate = await requireAdmin(req);
+    if (!gate.ok) return gate.response;
+  }
   const declaredLength = Number(req.headers.get("content-length") ?? 0);
   if (declaredLength > MAX_BODY_BYTES) {
     return new Response(`Request body is limited to ${MAX_BODY_BYTES} bytes`, { status: 413 });

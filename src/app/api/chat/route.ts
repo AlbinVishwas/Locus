@@ -1,3 +1,4 @@
+import { authorizeConversation, requireUser } from "@/lib/session";
 import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
@@ -126,6 +127,14 @@ export async function POST(req: Request) {
     conversationId = validation.conversationId;
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
+  }
+  // Users mode: only the session's owner (and anyone signed in, with no session id) may continue.
+  if (conversationId !== null) {
+    const auth = await authorizeConversation(req, conversationId);
+    if (!auth.ok) return auth.response;
+  } else {
+    const auth = await requireUser(req);
+    if (!auth.ok) return auth.response;
   }
 
   const encoder = new TextEncoder();

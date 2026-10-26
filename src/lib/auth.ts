@@ -123,42 +123,63 @@ async function hmac(payload: string): Promise<string> {
   return toBase64Url(signature);
 }
 
-/** Builds a new session token good for `sessionTtlMs()` from now. */
-export async function createSessionToken(): Promise<string> {
+/**
+ * Who a session belongs to, in users mode (src/lib/users/mode.ts): the
+ * user's id, their role, and the token version they signed in with (bumped
+ * when they're disabled or their passcode is reset, which signs them out).
+ * A session from the one-passcode days carries none of these.
+ */
+export interface SessionClaims {
+  u?: number;
+  r?: "user" | "admin";
+  tv?: number;
+}
+
+/** Builds a new session token good for `ttlMs` (default `sessionTtlMs()`) from now. */
+export async function createSessionToken(claims?: SessionClaims, ttlMs: number = sessionTtlMs()): Promise<string> {
   const payload = toBase64Url(
-    new TextEncoder().encode(JSON.stringify({ exp: Date.now() + sessionTtlMs() }))
+    new TextEncoder().encode(JSON.stringify({ exp: Date.now() + ttlMs, ...(claims ?? {}) }))
   );
   const signature = await hmac(payload);
   return `${payload}.${signature}`;
 }
 
 /**
- * Verifies a session token's signature and expiry. Never throws: a
- * malformed, tampered, or expired token is just "not valid", the same as a
- * missing one.
+ * Reads a session token: its claims and expiry if the signature and expiry
+ * are good, otherwise null. Never throws: a malformed, tampered, or expired
+ * token is just "not valid", the same as a missing one.
  */
-export async function verifySessionToken(token: string | undefined | null): Promise<boolean> {
-  if (!token) return false;
+export async function readSessionToken(token: string | undefined | null): Promise<(SessionClaims & { exp: number }) | null> {
+  if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 2) return false;
+  if (parts.length !== 2) return null;
   const [payload, signature] = parts;
 
   let expectedSignature: string;
   try {
     expectedSignature = await hmac(payload);
   } catch {
-    return false;
+    return null;
   }
-  if (!constantTimeEqual(signature, expectedSignature)) return false;
+  if (!constantTimeEqual(signature, expectedSignature)) return null;
 
   try {
-    const decoded = JSON.parse(new TextDecoder().decode(fromBase64Url(payload))) as {
-      exp?: number;
+    const decoded = JSON.parse(new TextDecoder().decode(fromBase64Url(payload))) as SessionClaims & { exp?: number };
+    if (typeof decoded.exp !== "number" || Date.now() >= decoded.exp) return null;
+    return {
+      exp: decoded.exp,
+      ...(typeof decoded.u === "number" ? { u: decoded.u } : {}),
+      ...(decoded.r === "user" || decoded.r === "admin" ? { r: decoded.r } : {}),
+      ...(typeof decoded.tv === "number" ? { tv: decoded.tv } : {}),
     };
-    return typeof decoded.exp === "number" && Date.now() < decoded.exp;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Verifies a session token's signature and expiry. */
+export async function verifySessionToken(token: string | undefined | null): Promise<boolean> {
+  return (await readSessionToken(token)) !== null;
 }
 
 type RateLimitEntry = { count: number; windowStart: number };

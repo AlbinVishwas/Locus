@@ -1,4 +1,7 @@
 import { runDocumentSearch, runDocumentSearchPage } from "@/lib/chat/documentSearch";
+import { logActivity } from "@/lib/records/activity";
+import { getRecordsDb } from "@/lib/records/db";
+import { activityFor, authorizeConversation } from "@/lib/session";
 import { getIndexDb, IndexUnavailableError } from "@/lib/search/indexDb";
 import { hasDocumentsForConversation } from "@/lib/search/query";
 import type { SessionSearchResponse } from "@/lib/sessionSearchClient";
@@ -64,6 +67,27 @@ export async function POST(req: Request) {
     return new Response('`mode` must be "exact" or "loose"', { status: 400 });
   }
 
+  // Users mode: only the session's owner. With it off this is a no-op.
+  const auth = await authorizeConversation(req, conversationId);
+  if (!auth.ok) return auth.response;
+  const started = performance.now();
+  const record = (a: { pages?: number; documents?: number; status?: "ok" | "error"; message?: string }) => {
+    if (!auth.user) return;
+    logActivity(
+      getRecordsDb(),
+      activityFor(req, auth.user, {
+        kind: a.status === "error" ? "search_failed" : isPage ? "search_more" : "search",
+        scope: "my-uploads",
+        queryText: message as string,
+        resultPages: a.pages ?? null,
+        resultDocuments: a.documents ?? null,
+        tookMs: performance.now() - started,
+        status: a.status ?? "ok",
+        message: a.message ?? null,
+      })
+    );
+  };
+
   const json = (body: SessionSearchResponse) =>
     Response.json(body, { headers: { "Cache-Control": "no-store" } });
 
@@ -74,14 +98,21 @@ export async function POST(req: Request) {
     try {
       hasFiles = hasDocumentsForConversation(getIndexDb(), conversationId);
     } catch (err) {
-      if (err instanceof IndexUnavailableError) return json({ status: "no-files" });
+      if (err instanceof IndexUnavailableError) {
+        record({ pages: 0, documents: 0, message: "no files" });
+        return json({ status: "no-files" });
+      }
       throw err;
     }
-    if (!hasFiles) return json({ status: "no-files" });
+    if (!hasFiles) {
+      record({ pages: 0, documents: 0, message: "no files" });
+      return json({ status: "no-files" });
+    }
 
     if (isPage) {
       const page = runDocumentSearchPage(conversationId, message, mode as "exact" | "loose", offset as number);
       if (!page) return json({ status: "no-files" });
+      record({ pages: page.totalPages, documents: page.totalDocuments });
       return json({ status: "ok", result: page, looseAlternative: null });
     }
 
@@ -89,12 +120,14 @@ export async function POST(req: Request) {
     // hasFiles was just checked and message is non-blank, so this is only
     // reachable if the files vanished in between (deleted mid-request).
     if (!outcome) return json({ status: "no-files" });
+    record({ pages: outcome.result.totalPages, documents: outcome.result.totalDocuments });
     return json({ status: "ok", result: outcome.result, looseAlternative: outcome.looseAlternative });
   } catch (err) {
     // The query itself is never logged: it may quote a client document.
     console.error("[/api/session-search] search failed", {
       error: err instanceof Error ? err.message : err,
     });
+    record({ status: "error", message: err instanceof Error ? err.message : "search failed" });
     return new Response("Search failed. See the server log for details.", { status: 500 });
   }
 }

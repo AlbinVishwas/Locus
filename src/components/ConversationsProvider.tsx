@@ -153,7 +153,7 @@ const ConversationsContext = createContext<ConversationsContextValue | null>(nul
 
 export function ConversationsProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { chatEnabled } = useFeatures();
+  const { chatEnabled, userId } = useFeatures();
 
   // Fire-and-forget: asks the model for a short topic phrase for a
   // conversation's first message, then upgrades its title once that
@@ -184,7 +184,7 @@ export function ConversationsProvider({ children }: { children: React.ReactNode 
   // initialState above, so there's nothing for hydration to mismatch —
   // real data arrives one tick later via a normal client-side update.
   useEffect(() => {
-    const loaded = loadConversations();
+    const loaded = loadConversations(userId);
     dispatch({ type: "hydrate", conversations: loaded });
 
     // Retroactively upgrades any conversation still on its raw-text
@@ -209,12 +209,12 @@ export function ConversationsProvider({ children }: { children: React.ReactNode 
     if (!state.isHydrated) return; // don't clobber storage with empty initial state
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     persistTimeoutRef.current = setTimeout(() => {
-      saveConversations(state.conversations);
+      saveConversations(state.conversations, userId);
     }, PERSIST_DEBOUNCE_MS);
     return () => {
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current);
     };
-  }, [state.conversations, state.isHydrated]);
+  }, [state.conversations, state.isHydrated, userId]);
 
   const newConversation = useCallback(() => dispatch({ type: "create" }), []);
   const selectConversation = useCallback((id: string) => dispatch({ type: "select", id }), []);

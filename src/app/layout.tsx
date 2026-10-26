@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { connection } from "next/server";
 import "./globals.css";
 import { ConversationsProvider } from "@/components/ConversationsProvider";
-import { FeaturesProvider } from "@/components/FeaturesProvider";
+import { FeaturesProvider, type ClientFeatures } from "@/components/FeaturesProvider";
 import { isChatEnabled } from "@/config/features";
+import { SESSION_COOKIE } from "@/lib/auth";
+import { userFromToken } from "@/lib/session";
+import { adminEnabled, usersEnabled } from "@/lib/users/mode";
 import { isLibraryEnabled, searchScope, type SearchScope } from "@/lib/library/config";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 
@@ -38,12 +42,25 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // Request time, not build time: LOCUS_CHAT_ENABLED is read when the
   // page is served, so flipping it takes a restart, never a rebuild.
   await connection();
-  const libraryEnabled = isLibraryEnabled();
+  const users = usersEnabled();
+  const user = users ? await userFromToken((await cookies()).get(SESSION_COOKIE)?.value) : null;
+  const isAdmin = user?.role === "admin" && adminEnabled();
+  // The library is the administrator's: with named accounts, everyone else gets the plain
+  // "search your own uploads" app.
+  const libraryEnabled = isLibraryEnabled() && (!users || isAdmin);
   // Only computed (and only sent) with the library on: with it off, the
   // browser gets exactly what it always did.
-  const features = libraryEnabled
+  const features: ClientFeatures = libraryEnabled
     ? { chatEnabled: isChatEnabled(), libraryEnabled, defaultScope: defaultScope() }
     : { chatEnabled: isChatEnabled() };
+  if (users) {
+    features.usersEnabled = true;
+    if (user) {
+      features.userId = user.id;
+      features.username = user.username;
+      features.isAdmin = isAdmin;
+    }
+  }
 
   return (
     <html lang="en" className="h-full antialiased">

@@ -1,5 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
+import { readSessionToken, SESSION_COOKIE } from "@/lib/auth";
+import { usersEnabled } from "@/lib/users/mode";
+
+/**
+ * Pages and APIs only the admin may use, in users mode. The proxy only reads
+ * the signed session (it can't open the records database); each of these
+ * routes then checks the account itself (src/lib/session.ts), so this is the
+ * first of two checks, not the only one.
+ */
+const ADMIN_PREFIXES = ["/sources", "/users", "/activity", "/search", "/api/sources", "/api/users", "/api/activity", "/api/search", "/api/library"];
+const isAdminPath = (p: string) => ADMIN_PREFIXES.some((x) => p === x || p.startsWith(`${x}/`));
 
 /**
  * Gate for every page and API route: no valid session cookie, no access.
@@ -14,13 +24,20 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/login" || pathname === "/api/login" || pathname === "/api/logout") {
+  const users = usersEnabled();
+  if (pathname === "/login" || pathname === "/api/login" || pathname === "/api/logout" || (users && pathname === "/api/signup")) {
     return NextResponse.next();
   }
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
-  const authenticated = await verifySessionToken(token);
+  const claims = await readSessionToken(token);
+  // In users mode a session must name a user; one from the one-passcode days doesn't count.
+  const authenticated = claims !== null && (!users || claims.u !== undefined);
   if (authenticated) {
+    if (users && isAdminPath(pathname) && claims.r !== "admin") {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Admins only" }, { status: 403 });
+      return NextResponse.redirect(new URL("/", request.url));
+    }
     return NextResponse.next();
   }
 

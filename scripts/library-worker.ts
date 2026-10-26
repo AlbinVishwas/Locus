@@ -29,6 +29,10 @@ import { acquireLock, prepareProcessForLibraryRun } from "../src/lib/library/run
 import { openRegistry } from "../src/lib/library/sources/registry";
 import { DataDirGuard, StorageRefusedError } from "../src/lib/library/storage/guard";
 import { createRegistryControl, syncEnvSources } from "../src/lib/library/worker";
+import type { IndexerEvent } from "../src/lib/library/pipeline";
+import { logActivity } from "../src/lib/records/activity";
+import { getRecordsDb } from "../src/lib/records/db";
+import { usersEnabled } from "../src/lib/users/mode";
 
 function fail(message: string): never {
   console.error(`[worker] ${message}`);
@@ -80,7 +84,17 @@ async function main() {
   const control = createRegistryControl(registry, config);
   log(`Library data: ${paths.root} (${guard.info?.volumeName ?? "?"}, ${guard.info?.fsType}); limit ${formatBytes(config.maxBytes)}, keeping ${formatBytes(config.minFreeBytes)} free.`);
 
-  const indexer = new LibraryIndexer({ config, guard, sources: [], log, onFailure: (e) => failureLog.write(JSON.stringify(e)) });
+  // The administrator's activity log (users mode only): storage pauses and sources in trouble.
+  const recordEvent = usersEnabled()
+    ? (e: IndexerEvent) => {
+        try {
+          logActivity(getRecordsDb(), { kind: e.kind, scope: e.source ? `source:${e.source}` : null, status: e.kind === "indexer_resumed" ? "ok" : "error", message: e.message });
+        } catch (err) {
+          log(`Could not write to the activity log: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+    : undefined;
+  const indexer = new LibraryIndexer({ config, guard, sources: [], log, onFailure: (e) => failureLog.write(JSON.stringify(e)), onEvent: recordEvent });
   const memory = new MemorySampler();
   memory.start(5000);
   let lastPrinted = 0;

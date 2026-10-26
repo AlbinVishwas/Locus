@@ -8,6 +8,12 @@ export interface ClientFeatures {
   libraryEnabled?: boolean;
   /** LOCUS_SEARCH_SCOPE: where searches look until someone picks otherwise. Only used with the library on. */
   defaultScope?: "session" | "library" | "both";
+  /** Named accounts (LOCUS_USERS_ENABLED). Absent: the one-passcode app, unchanged. */
+  usersEnabled?: boolean;
+  userId?: number;
+  username?: string;
+  /** The signed-in account is the administrator (Sources, Users, Activity). */
+  isAdmin?: boolean;
 }
 
 /**

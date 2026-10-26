@@ -1,5 +1,7 @@
 import { getLibraryDb, libraryErrorStatus } from "@/lib/library/db";
 import { libraryCounts } from "@/lib/library/store";
+import { requireAdmin } from "@/lib/session";
+import { usersEnabled } from "@/lib/users/mode";
 import type { LibraryStatus } from "@/lib/libraryClient";
 
 export const runtime = "nodejs";
@@ -9,9 +11,14 @@ export const runtime = "nodejs";
  * failed, and whether the drive is connected. 404 unless the library is
  * enabled. Counts only -- never a path or a filename.
  */
-export async function GET() {
+export async function GET(req?: Request) {
   const conn = getLibraryDb();
   if (conn.status === "disabled") return new Response("Not found", { status: 404 });
+  if (usersEnabled()) {
+    if (!req) return new Response("Not authenticated", { status: 401 });
+    const gate = await requireAdmin(req);
+    if (!gate.ok) return gate.response;
+  }
   const json = (s: LibraryStatus) => Response.json(s, { headers: { "Cache-Control": "no-store" } });
   const none = { documents: 0, pagesIndexed: 0, indexing: 0, failed: 0 };
   if (conn.status === "disconnected") return json({ connected: false, ...none });

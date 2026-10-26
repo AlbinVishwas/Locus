@@ -1,4 +1,11 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
+import { logActivity } from "@/lib/records/activity";
+import { getRecordsDb } from "@/lib/records/db";
+import { markConversationUploadsDeleted, markUploadDeleted, recordUpload, releaseConversation } from "@/lib/records/ownership";
+import { userUploadBytes } from "@/lib/records/users";
+import { activityFor, authorizeConversation } from "@/lib/session";
+import { userUploadLimitBytes } from "@/lib/users/mode";
 import { indexPath } from "@/lib/search/indexDb";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 import { maxFilesPerConversation, maxUploadFileBytes, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
@@ -47,6 +54,11 @@ export async function POST(req: Request) {
   const idError = badConversationId(conversationId);
   if (idError) return new Response(idError, { status: 400 });
 
+  // Users mode: the first signed-in user to use a session owns it; anyone else gets "No such session".
+  const auth = await authorizeConversation(req, conversationId as string);
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
+
   const file = formData.get("file");
   if (!(file instanceof File)) {
     return new Response("`file` is required", { status: 400 });
@@ -56,6 +68,19 @@ export async function POST(req: Request) {
   const validation = validateUploadBytes(bytes, maxUploadFileBytes());
   if (!validation.ok) {
     return new Response(validation.error, { status: 400 });
+  }
+
+  // Users mode: each person has their own upload limit under the shared cap.
+  if (user) {
+    const used = userUploadBytes(getRecordsDb(), user.id);
+    const limit = userUploadLimitBytes();
+    if (used + bytes.length > limit) {
+      logActivity(getRecordsDb(), activityFor(req, user, { kind: "upload_failed", status: "refused", message: "over the per-user upload limit", details: { sizeBytes: bytes.length } }));
+      return new Response(
+        `You've used ${formatMB(used)} MB of your ${formatMB(limit)} MB upload limit; this file (${formatMB(bytes.length)} MB) would go over it. Remove some of your files first.`,
+        { status: 507 }
+      );
+    }
   }
 
   const existing = uploadedDocuments(getWritableDb(), conversationId as string);
@@ -104,14 +129,43 @@ export async function POST(req: Request) {
 
       send({ type: "stage", stage: "uploading" });
 
+      // Users mode: a record of every upload, ready or failed, for the admin's view.
+      const note = (status: "ready" | "failed", info: { docId?: number; pageCount?: number; error?: string }) => {
+        if (!user) return;
+        const db = getRecordsDb();
+        recordUpload(db, {
+          userId: user.id,
+          conversationId: conversationId as string,
+          docId: info.docId ?? null,
+          filename: originalFilename,
+          sizeBytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          pageCount: info.pageCount ?? null,
+          status,
+          error: info.error ?? null,
+        });
+        logActivity(
+          db,
+          activityFor(req, user, {
+            kind: status === "ready" ? "upload_ready" : "upload_failed",
+            status: status === "ready" ? "ok" : "error",
+            message: info.error ?? null,
+            resultPages: info.pageCount ?? null,
+            details: { filename: originalFilename, sizeBytes: bytes.length },
+          })
+        );
+      };
+
       const onStage = (event: UploadStage) => {
         if (event.stage === "reading" || event.stage === "indexing") {
           send({ type: "stage", stage: event.stage });
         } else if (event.stage === "running-ocr") {
           send({ type: "stage", stage: "running-ocr", page: event.page, totalPages: event.totalPages });
         } else if (event.stage === "ready") {
+          note("ready", { docId: event.docId, pageCount: event.pageCount });
           send({ type: "ready", docId: event.docId, pageCount: event.pageCount });
         } else if (event.stage === "failed") {
+          note("failed", { error: event.message });
           send({ type: "error", message: event.message });
         }
       };
@@ -120,6 +174,7 @@ export async function POST(req: Request) {
         await indexUpload({ conversationId: conversationId as string, originalFilename, bytes, onStage });
       } catch (err) {
         console.error("[/api/uploads] indexing failed", { error: err });
+        note("failed", { error: "indexing failed" });
         send({ type: "error", message: "Indexing failed. See the server log for details." });
       } finally {
         clearInterval(heartbeat);
@@ -151,6 +206,8 @@ export async function GET(req: Request) {
   const conversationId = new URL(req.url).searchParams.get("conversationId");
   const idError = badConversationId(conversationId);
   if (idError) return new Response(idError, { status: 400 });
+  const auth = await authorizeConversation(req, conversationId as string);
+  if (!auth.ok) return auth.response;
 
   const docs = uploadedDocuments(getWritableDb(), conversationId as string);
   return Response.json({ documents: docs }, { headers: { "Cache-Control": "no-store" } });
@@ -168,6 +225,9 @@ export async function DELETE(req: Request) {
   const conversationId = url.searchParams.get("conversationId");
   const idError = badConversationId(conversationId);
   if (idError) return new Response(idError, { status: 400 });
+  const auth = await authorizeConversation(req, conversationId as string);
+  if (!auth.ok) return auth.response;
+  const user = auth.user;
 
   const docIdRaw = url.searchParams.get("docId");
   if (docIdRaw !== null) {
@@ -179,10 +239,20 @@ export async function DELETE(req: Request) {
     if (!deleted) {
       return new Response("No such file in this conversation", { status: 404 });
     }
+    if (user) {
+      markUploadDeleted(getRecordsDb(), conversationId as string, docId);
+      logActivity(getRecordsDb(), activityFor(req, user, { kind: "upload_deleted", details: { docId } }));
+    }
     return Response.json({ ok: true });
   }
 
   await deleteConversationUploads(conversationId as string);
+  if (user) {
+    const db = getRecordsDb();
+    markConversationUploadsDeleted(db, conversationId as string);
+    releaseConversation(db, conversationId as string);
+    logActivity(db, activityFor(req, user, { kind: "session_deleted" }));
+  }
   return Response.json({ ok: true });
 }
 
