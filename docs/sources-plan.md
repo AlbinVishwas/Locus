@@ -1,7 +1,8 @@
 # Sources — plan (Phase A)
 
-Status: **plan only, for approval.** No feature code exists yet. Restore point:
-tag `pre-sources` (commit `d50fd8f`). Builds on the library work in
+Status: **plan only, for approval** (amended once after review: see
+Amendment 1). No feature code exists yet. Restore point: tag `pre-sources`
+(commit `d50fd8f`). Builds on the library work in
 [library-plan.md](library-plan.md) and [library.md](library.md).
 
 What this adds, in one paragraph: the library moves onto the laptop's own disk
@@ -15,6 +16,205 @@ checks the index still searches fast at library scale.
 Everything new is **off by default.** With `LOCUS_ADMIN_PASSCODE` unset there
 is no admin, no Sources page and no source APIs; with `LOCUS_LIBRARY_ENABLED`
 unset there is no library at all, as today.
+
+---
+
+## Amendment 1 — user accounts, private uploads, activity database
+
+After review you confirmed the **separate indexer process**, and added two
+requirements:
+
+- **User-based access: each user can access only what they upload.**
+- **A database of these records and all search activity, which you (the admin)
+  can open at any time to check for issues.**
+
+That is a bigger change than the sources work, because today Locus has **no
+users**: one shared passcode, and a "session" is only a random id kept in the
+browser. **Where this amendment disagrees with the sections below it, this
+amendment wins.** It is built *before* the Sources page (it is what "admin"
+now means), and it makes Phase B larger: roughly a third more work.
+
+### A. Users mode (off by default)
+
+`LOCUS_USERS_ENABLED=true` switches Locus from "one shared passcode" to
+**named users**. It requires `LOCUS_ADMIN_PASSCODE`. With it unset, Locus
+behaves exactly as today: shared passcode, no accounts, no activity log; the
+characterization tests pin that. Sources and the library work in either mode.
+
+### B. Accounts
+
+- **The admin creates users.** Users page → *Add user* → a username and a
+  generated personal passcode (12 characters from an unambiguous alphabet,
+  about 60 bits), **shown once** with a copy button. There is no open
+  sign-up. The admin can disable, re-enable, reset the passcode of, or remove
+  any user. A user can change their own passcode.
+- **Sign-in:** the login page asks for **username and passcode**. The admin
+  signs in as `admin` with `LOCUS_ADMIN_PASSCODE`. Both are on the same page,
+  so admin access works from anywhere you can reach Locus, including through
+  the tunnel ("anytime"); `LOCUS_ADMIN_LOCAL_ONLY=true` stays an optional
+  switch if you ever want admin only from this laptop.
+- **Storage of passcodes:** scrypt (N=16384, r=8, p=1, per-user 16-byte salt),
+  compared in constant time. Plain passcodes are never stored or logged.
+- **Session:** the same signed cookie as today (`locus_session`, `HttpOnly;
+  Secure; SameSite=Lax`, same `SESSION_SECRET`), now carrying
+  `{ u: userId, r: role, tv: tokenVersion, exp }`. The proxy (Edge runtime, no
+  database) checks the signature and expiry; **every API route also loads the
+  user** and rejects a disabled user or a stale `tv`, so disabling a user or
+  resetting their passcode **signs them out within seconds**. A token without
+  `u` is invalid in users mode.
+- **Rate limits:** per caller (5 failures / 5 min, as today) **and per
+  username** (5 failures / 5 min locks that username for 5 min), plus the
+  global admin ceiling from §4. Every failure is written to the activity log.
+- **Admin role:** `r: "admin"` replaces the separate admin cookie of §4 *in
+  users mode* (in shared-passcode mode §4's second cookie is unchanged).
+  `requireAdmin()` is one function that handles both.
+
+### C. Private uploads (ownership)
+
+- A new table `conversation_owners(conversation_id, user_id)` (in the records
+  database, §E) records **who owns each session**. The existing session
+  index is **not** touched: ownership lives beside it, keyed by the same
+  session id.
+- **First use claims it:** the first upload for a new session id claims it for
+  the signed-in user (atomic `INSERT OR IGNORE`, then re-read the owner).
+  After that, **uploads, the file list, session search, chat and delete all
+  check the caller owns that session id**, server-side, in every route that
+  takes a `conversationId` (`/api/uploads` POST/GET/DELETE,
+  `/api/session-search`, `/api/chat`, `/api/title`). Someone else's session id
+  gets **404 "No such session"**: indistinguishable from a session that doesn't
+  exist, so ids can't even be probed. Each denial is logged (§F).
+- The admin sees **records** (file name, size, pages, who, when, status) and
+  activity. The admin **cannot read or search other users' document text** (an
+  admin's own uploads work like anyone's).
+- **The browser's session list is namespaced per user** (local storage key
+  `chat-conversations:<userId>` in users mode; unchanged key otherwise), so a
+  second person on the same browser never sees the first one's session titles
+  or saved results. Session *lists* remain per browser (a user on a new
+  browser starts with an empty list, though their server-side records are
+  intact): a limit I'm noting rather than solving now.
+- The standalone **`/search` page and `/api/search`** (the old `data/tenders`
+  corpus, not anyone's upload) become **admin-only** in users mode.
+
+### D. Who can search the library
+
+Library sources are **admin-managed, not user uploads**, so "only what they
+upload" can't apply to them without hiding the library from everyone. My
+default: **every signed-in user can search every source** (they see source
+names only, never paths or settings), and **each source can be restricted to
+chosen users** from the Sources page ("Visible to: everyone / only these
+users"). A restricted source is **absent** for everyone else, in the
+dropdown, in "All sources", and in direct API calls (checked server-side in
+the search route via a `source_access` table; a user with a restricted set
+searches those id ranges only). Question 1 below asks you to confirm.
+
+### E. The records database
+
+One SQLite file, **`data/app/records.db`** (project folder, gitignored and
+vercelignored under the existing `/data` rules, override with
+`LOCUS_APP_DB_PATH`). It is deliberately **not** under `LOCUS_DATA_DIR`: logins
+must keep working if the library drive is unplugged, and it is small. WAL;
+the app is the main writer, the indexer worker only *appends* activity rows
+(busy timeout on both). Tables:
+
+| Table | Holds |
+| --- | --- |
+| `users` | id, username (unique), role, passcode hash and salt, token version, created, last sign-in, disabled-at |
+| `conversation_owners` | session id → user (the privacy boundary of §C), created, last used |
+| `uploads` | one row per upload: user, session id, file name, size, sha256, pages, status, uploaded-at, **deleted-at** (history survives deletion) |
+| `source_access` | restricted sources → allowed users (§D) |
+| `activity` | the log (§F) |
+
+### F. The activity log: "all search activity", and issues
+
+Every row: time, user, role, **event**, **scope** (my uploads / a source / all
+sources), **query text**, result **counts** (pages, documents; never the
+snippets or document text), time taken, **status** (`ok`, `error`, `denied`,
+`refused`), error message, caller address (`cf-connecting-ip`, else the
+connection address), short user-agent.
+
+Events logged: sign-in and sign-out, **failed sign-ins**, **every search**
+(session, library, paging, loose-mode switches), uploads (started, ready,
+failed), upload deletions, **denied access** (a user touching someone else's
+session id), source add / test / pause / resume / rescan / remove, user
+add / disable / reset / remove, **indexer events** (storage-limit pause,
+low-disk pause, source error, a source's drive going away), and server-side
+errors from search and upload routes.
+
+- **Query text is stored here** (this overrides the "queries are never
+  logged" rule that applied to server *log files*; they stay out of those).
+  Queries can quote client documents, so the table is **admin-only**, kept
+  **365 days** by default (`LOCUS_ACTIVITY_RETENTION_DAYS`; purged hourly),
+  and the login screen says *"Searches are logged for the administrator."*
+  `LOCUS_LOG_QUERY_TEXT=false` records everything *except* the query text.
+- The log is append-only through the app (there is no edit route); only the
+  retention purge deletes.
+
+### G. Admin screens (all admin-only, enforced server-side)
+
+A shared admin header: **Sources · Users · Activity**.
+
+- **Activity** (`/activity`): an **Issues strip** on top (last 24 h: failed
+  sign-ins, denied access attempts, search errors, upload failures, indexing
+  failures, storage pauses; each count is a link that filters the table), a
+  filter bar (user, event, status, date range, text in the query), the table
+  (time, user, event, scope, query, results, took, status; 50 per page, newest
+  first; the row opens a detail panel), an **Issues only** toggle, **Export
+  CSV** (of the current filter), and auto-refresh. At 390 px the table becomes
+  stacked cards.
+- **Users** (`/users`): username, role, last sign-in, uploads (count and
+  size), searches in the last 30 days, status; *Add user*, *Disable/Enable*,
+  *Reset passcode*, *Remove* (removing a user also deletes their uploads and
+  records after a confirmation that says so; *Disable* keeps everything). An
+  *Uploads* link per user lists their upload **records** (not contents).
+- **Sources** (§8) additionally shows, per source, *Visible to*.
+
+### H. Files, tests, build order, risks added by this amendment
+
+**New files:** `src/lib/records/{db,users,passcodes,ownership,activity,access}.ts`,
+`src/lib/session.ts` (current user for routes), `src/app/api/users/**`,
+`src/app/api/activity/{route,export}/route.ts`, `src/app/users/page.tsx`,
+`src/app/activity/page.tsx`, `src/components/admin/{AdminHeader,UsersView,ActivityView,IssuesStrip}.tsx`,
+`scripts/e2e-users.mjs`.
+
+**Changed (all guarded by users mode, so a no-settings run is identical):**
+`src/app/api/login/route.ts` and `src/app/login/page.tsx` (username field,
+logging, notice), `src/lib/auth.ts` (token claims, in users mode only),
+`src/proxy.ts` (admin pages gate), `src/app/api/{uploads,session-search,chat,title,search}/route.ts`
+(an ownership/permission check at the top, `if (usersEnabled())`),
+`src/lib/storage.ts` and `ConversationsProvider.tsx` (per-user storage key),
+`src/app/api/library/{search,status}/route.ts` (source permissions, activity
+logging). **No pre-library test and no characterization test is modified**;
+they run with users mode off.
+
+**Tests added:** password hashing and rate limits (per caller, per username,
+global); token claims, **disabled user and password reset take effect on the
+next request**; **cross-user isolation in every route** (user B gets 404 for
+A's session id on uploads GET/POST/DELETE, session search, chat, title; the
+denial is logged; A's data unaffected); the admin can read records but a
+search by the admin never returns another user's text; restricted-source
+visibility (absent from the dropdown, from "All sources", and from direct
+calls, for non-members); activity rows written for each event kind with the
+right fields, **no document text or snippets in any row**, query text omitted
+under `LOCUS_LOG_QUERY_TEXT=false`, retention purge; CSV export escaping
+(including formula-injection characters); the Activity/Users screens'
+rendering at 4 widths; per-user local storage namespacing. E2E
+(`e2e:users`, new): two users upload different PDFs and each can only find
+their own; user B cannot reach A's session or the admin pages; the admin sees
+both users' searches and uploads in Activity, the failed sign-in and the
+denied attempt in the Issues strip, and can disable a user who is then
+signed out.
+
+**Build order:** step 5 (admin) becomes *records database → users, sign-in,
+sessions → ownership checks in every route → admin role → Users and Activity
+screens*, then Sources as already planned.
+
+**Risks added:** (1) **a missed route** would leak a session: mitigated by one
+`authorizeConversation()` helper used everywhere and a test that enumerates
+every route taking a `conversationId`; (2) **query text is sensitive**, hence
+admin-only, retention, and the notice; (3) **a lost admin passcode** locks
+admin out (it's in `.env.local`, so recovery is editing a file); (4)
+**per-browser session lists** (above); (5) users mode changes the login for
+everyone, so it ships **off** and is switched on deliberately.
 
 ---
 
@@ -738,7 +938,25 @@ or `sources.db` is traced into a build), `e2e`, `e2e:chat`, `e2e:library`
 
 ## 13. Questions for you
 
-1. **Worker model (decision 1).** OK that indexing is a separate process (`npm run library:worker`, started by `npm run share` when library + admin are set)? The alternative, the Next.js server spawning it, is simpler to use but ties indexing to the web server's lifetime and puts process-spawning in a request handler.
-2. **"All sources" including this session's uploads (decision 2).** OK? Or should "All sources" be library-only, with uploads only under "This session"?
-3. **Admin sign-in locality.** Should I make `LOCUS_ADMIN_LOCAL_ONLY` the **default** whenever `LOCUS_ADMIN_PASSCODE` is set (admin only from this laptop, never through the tunnel, with an opt-out)? I'd recommend yes, since the app is shared publicly. As planned it's opt-in.
-4. **Default allowed roots.** `/Volumes` only, as you specified. To test with the tender PDFs in `data/tenders` I'll set `LOCUS_ALLOWED_ROOTS` in the test runs only; say if you want the project's `data/` folder allowed by default.
+Settled: **separate worker process**, yes (you confirmed). The earlier
+question about "All sources" is superseded by Amendment 1 (the dropdown becomes
+*All sources / one source / My uploads*, where "All sources" means every
+source **you're allowed to see** plus your own uploads).
+
+1. **Can every signed-in user search the library sources** (my default: yes,
+   with the option to restrict a source to chosen users)? Or should users see
+   **only their own uploads**, with the library visible to admin alone? The
+   second reading hides the library from everyone but you.
+2. **Accounts: you create them** (a personal passcode shown to you once for
+   each user), no open sign-up. OK? Or do you want people to register
+   themselves?
+3. **Search text in the activity log**, visible only to you, kept 365 days,
+   with a notice on the login screen. OK? (Turning the text off keeps
+   everything else.)
+4. **Allowed roots**, restated: `/Volumes` only by default; to test I'll add
+   the project's `data/` folder myself in test runs. Say if you'd rather it be
+   allowed by default (not recommended).
+
+Not asked, decided: admin sign-in **works through the tunnel** (you want
+access "anytime"), protected by the strong passcode, rate limits and the global
+lockout; `LOCUS_ADMIN_LOCAL_ONLY=true` remains an optional switch.
