@@ -218,6 +218,41 @@ everyone, so it ships **off** and is switched on deliberately.
 
 ---
 
+## Amendment 2 — your answers to Amendment 1's questions
+
+**Supersedes Amendment 1 sections B and D where they differ.**
+
+1. **Users can search only what they upload.** Library sources are for the
+   admin. So in users mode: normal users get **no** library access of any kind
+   (`/api/library/search`, `/api/library/status`, the Sources APIs and the
+   scope dropdown all answer 403 for them, server-side) and just search their
+   own uploads, as the app does today. The **admin** searches their own
+   uploads **and** the library, with the dropdown (*All sources / one source /
+   My uploads*). The per-source "visible to chosen users" feature
+   (`source_access`) is **dropped**: nothing needs it.
+2. **Self-registration.** People create their own account on a sign-up screen
+   (username, and a passcode they choose, at least 8 characters, stored with
+   scrypt). Because Locus is reachable over a public tunnel, **sign-up is gated
+   by a sign-up code** by default: the shared passcode you already use
+   (`LOCUS_PASSCODE`, or `LOCUS_SIGNUP_CODE` if set) becomes the code you hand
+   to the people you want to let in. `LOCUS_SIGNUP=code` (default) |
+   `open` (anyone who finds the link) | `off`. Sign-up is rate-limited (5 per
+   hour per address), usernames are unique ignoring case, and you can disable
+   or remove any user, or reset their passcode (there is no email, so a
+   forgotten passcode means asking you). *Add user* (you create one) stays
+   available too. **Open question: code vs fully open (below).**
+3. **A per-user upload limit** (`LOCUS_USER_UPLOAD_MB`, default 1,000 MB, users
+   mode only) sits under the existing shared 5 GB cap, so one self-registered
+   user can't fill everyone's space. Shown on the sidebar's sessions card.
+4. **Search text is stored** in the activity log, admin-only, 365 days, with the
+   notice on the sign-in screen (as in Amendment 1 §F).
+
+Added tests: sign-up gated by the code, refused when `off`, rate limit, duplicate
+and case-variant usernames, weak passcodes; **a normal user gets 403 from every
+library and Sources route and sees no dropdown**; the per-user upload limit.
+
+---
+
 ## 0. Two facts about this machine that shape the plan
 
 1. **Free space is the real limit, not the cap.** The laptop has **96 GB free
@@ -938,25 +973,11 @@ or `sources.db` is traced into a build), `e2e`, `e2e:chat`, `e2e:library`
 
 ## 13. Questions for you
 
-Settled: **separate worker process**, yes (you confirmed). The earlier
-question about "All sources" is superseded by Amendment 1 (the dropdown becomes
-*All sources / one source / My uploads*, where "All sources" means every
-source **you're allowed to see** plus your own uploads).
+Settled: separate worker process; users search only their own uploads (admin
+also searches the library); self-registration; search text stored.
 
-1. **Can every signed-in user search the library sources** (my default: yes,
-   with the option to restrict a source to chosen users)? Or should users see
-   **only their own uploads**, with the library visible to admin alone? The
-   second reading hides the library from everyone but you.
-2. **Accounts: you create them** (a personal passcode shown to you once for
-   each user), no open sign-up. OK? Or do you want people to register
-   themselves?
-3. **Search text in the activity log**, visible only to you, kept 365 days,
-   with a notice on the login screen. OK? (Turning the text off keeps
-   everything else.)
-4. **Allowed roots**, restated: `/Volumes` only by default; to test I'll add
-   the project's `data/` folder myself in test runs. Say if you'd rather it be
-   allowed by default (not recommended).
-
-Not asked, decided: admin sign-in **works through the tunnel** (you want
-access "anytime"), protected by the strong passcode, rate limits and the global
-lockout; `LOCUS_ADMIN_LOCAL_ONLY=true` remains an optional switch.
+1. **Sign-up gate:** require the sign-up code (my default, since the link is
+   public), or let anyone who finds the link register (`LOCUS_SIGNUP=open`)?
+2. **Allowed roots** (see the explanation in the conversation): `/Volumes` only
+   by default, with folders added through `LOCUS_ALLOWED_ROOTS` (my
+   recommendation), or also allow the project's `data/` folder by default?
