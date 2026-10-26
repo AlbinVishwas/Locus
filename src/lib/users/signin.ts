@@ -47,7 +47,7 @@ export async function signIn(req: Request, input: { username?: unknown; passcode
   const addressKey = ip ?? "unknown";
   const username = asText(input.username)?.trim() ?? null;
   const passcode = asText(input.passcode);
-  if (!username || !passcode) return { ok: false, status: 400, error: "Enter your username and passcode." };
+  if (!username || !passcode) return { ok: false, status: 400, error: "Enter your username and password." };
 
   const nameKey = username.toLowerCase();
   const isAdminName = nameKey === ADMIN_USERNAME;
@@ -60,7 +60,7 @@ export async function signIn(req: Request, input: { username?: unknown; passcode
     return refuse(TOO_MANY, 429, "too many attempts", isAdminName ? ADMIN_USERNAME : null);
   }
 
-  const fail = (message: string, who: string | null, error = "Wrong username or passcode.", status = 401) => {
+  const fail = (message: string, who: string | null, error = "Wrong username or password.", status = 401) => {
     signInByAddress.record(addressKey);
     signInByUsername.record(nameKey);
     if (isAdminName) adminSignInGlobal.record("admin");

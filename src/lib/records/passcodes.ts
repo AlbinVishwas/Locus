@@ -58,11 +58,11 @@ export function generatePasscode(length = 12): string {
 const COMMON = new Set(["password", "passcode", "12345678", "123456789", "1234567890", "qwertyui", "qwerty123", "iloveyou", "letmein1", "welcome1", "admin123", "password1", "password123"]);
 
 export function checkPasscodeStrength(passcode: unknown, username?: string): { ok: true } | { ok: false; message: string } {
-  if (typeof passcode !== "string") return { ok: false, message: "Choose a passcode." };
+  if (typeof passcode !== "string") return { ok: false, message: "Choose a password." };
   if (passcode.length < 8) return { ok: false, message: "Use at least 8 characters." };
-  if (passcode.length > 200) return { ok: false, message: "That passcode is too long (200 characters at most)." };
-  if (COMMON.has(passcode.toLowerCase())) return { ok: false, message: "That passcode is too easy to guess." };
-  if (username && passcode.toLowerCase() === username.toLowerCase()) return { ok: false, message: "The passcode can't be the same as the username." };
-  if (/^(.)\1+$/.test(passcode)) return { ok: false, message: "That passcode is too easy to guess." };
+  if (passcode.length > 200) return { ok: false, message: "That password is too long (200 characters at most)." };
+  if (COMMON.has(passcode.toLowerCase())) return { ok: false, message: "That password is too easy to guess." };
+  if (username && passcode.toLowerCase() === username.toLowerCase()) return { ok: false, message: "The password can't be the same as the username." };
+  if (/^(.)\1+$/.test(passcode)) return { ok: false, message: "That password is too easy to guess." };
   return { ok: true };
 }

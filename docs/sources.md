@@ -54,8 +54,12 @@ default 8; users' last `SESSION_TTL_HOURS`).
   the old shared `LOCUS_PASSCODE`. `LOCUS_SIGNUP=open` lets anyone register;
   `LOCUS_SIGNUP=off` closes it (you create accounts yourself on the Users page,
   which gives a generated passcode shown once).
-- **Passcodes** are stored only as salted scrypt hashes. People can change their
-  own (`POST /api/account/passcode`, which signs out their other devices).
+- **Passwords** are stored only as salted scrypt hashes. People change their own
+  at **Change password** in the sidebar (`/account`; needs the current one, signs
+  out their other devices). The admin's lives in `.env.local`.
+- The sign-in page says "username and password" and that the old shared passcode no
+  longer works; the shared passcode alone answers "Enter your username and
+  password", and isn't accepted as anyone's password.
 - **Disable / reset / remove** (Users page) take effect at once: the person's
   sign-in token carries a version number that those actions move. Removing a
   user also deletes their uploaded files and sessions (their activity history

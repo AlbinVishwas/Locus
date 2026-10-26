@@ -17,6 +17,7 @@ import { DELETE as removeUser, PATCH as patchUser } from "./users/[id]/route";
 import { GET as listActivity } from "./activity/route";
 import { GET as exportActivity } from "./activity/export/route";
 import { GET as activitySummary } from "./activity/summary/route";
+import { POST as changePassword } from "./account/passcode/route";
 
 /**
  * Users mode end to end through the route handlers: who can reach what,
@@ -177,6 +178,37 @@ describe("one person's files are theirs alone", () => {
     expect(passcode.length).toBeGreaterThanOrEqual(8);
     expect((await searchSession(alice.cookie, "c", "abc")).status).toBe(401);
     expect(await signIn("alice", passcode)).toContain("locus_session=");
+  });
+});
+
+describe("changing your own password", () => {
+  const change = (cookie: string, body: object) => changePassword(req("/api/account/passcode", { method: "POST", cookie, body }));
+
+  it("needs the current password; then only the new one works, and other devices are signed out", async () => {
+    const alice = await newUser("alice");
+    const otherDevice = await signIn("alice", alice.passcode, "10.0.0.9");
+
+    const wrong = await change(alice.cookie, { current: "not my password at all", next: "a brand new password 1" });
+    expect(wrong.status).toBe(403);
+    expect(((await wrong.json()) as { error: string }).error).toContain("current password");
+    const weak = await change(alice.cookie, { current: alice.passcode, next: "short" });
+    expect(weak.status).toBe(400);
+
+    const ok = await change(alice.cookie, { current: alice.passcode, next: "a brand new password 1" });
+    expect(ok.status).toBe(200);
+    const fresh = cookieOf(ok);
+    expect((await searchSession(fresh, "c1", "abc")).status).not.toBe(401); // this device stays signed in
+    expect((await searchSession(otherDevice, "c1", "abc")).status).toBe(401); // the other one doesn't
+    expect((await login(req("/api/login", { method: "POST", body: { username: "alice", passcode: alice.passcode } }))).status).toBe(401);
+    expect(await signIn("alice", "a brand new password 1")).toContain("locus_session=");
+    expect(queryActivity(getRecordsDb(), { kinds: ["passcode_changed"] }).total).toBe(3) // two refused tries and the change;
+    expect(JSON.stringify(getRecordsDb().prepare("SELECT * FROM activity").all())).not.toContain("brand new password");
+  });
+
+  it("is not for the admin (that password lives in .env.local) or anonymous callers", async () => {
+    const admin = await signIn("admin", ADMIN_PASSCODE);
+    expect((await change(admin, { current: ADMIN_PASSCODE, next: "another long password 2" })).status).toBe(400);
+    expect((await changePassword(req("/api/account/passcode", { method: "POST", body: { current: "x", next: "y" } }))).status).toBe(401);
   });
 });
 

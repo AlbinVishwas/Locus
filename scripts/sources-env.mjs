@@ -58,6 +58,8 @@ export async function startEnv({ port = Number(process.env.E2E_PORT ?? 3210), wo
       PORT: String(port),
       LOCUS_USERS_ENABLED: "true",
       LOCUS_ADMIN_PASSCODE: ADMIN_PASSCODE,
+      // Set explicitly: `next start` and the worker also read .env.local, whose values must not leak into this scratch run.
+      LOCUS_SIGNUP: "code",
       LOCUS_SIGNUP_CODE: SIGNUP_CODE,
       SESSION_SECRET: "e2e-session-secret-e2e-session-secret-1234",
       LOCUS_SECRETS_KEY: "e2e-secrets-key-e2e-secrets-key-e2e-secrets",

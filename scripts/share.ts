@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { isChatEnabled } from "../src/config/features";
 import { isLibraryEnabled } from "../src/lib/library/config";
-import { adminEnabled, usersEnabled } from "../src/lib/users/mode";
+import { adminEnabled, signupMode, usersEnabled } from "../src/lib/users/mode";
 
 /**
  * `npm run share`: everything needed to hand someone a working, public
@@ -443,7 +443,8 @@ async function main() {
   console.log(`[share] Tunnel URL: ${tunnel.url}`);
   updateVercelRedirect(tunnel.url);
   if (usersEnabled()) {
-    console.log(`[share] Share the link above plus the sign-up code (LOCUS_SIGNUP_CODE) with the people who should have an account.`);
+    if (signupMode() === "off") console.log(`[share] Sign-up is closed (LOCUS_SIGNUP=off): people sign in with the accounts you created on the Users page.`);
+    else console.log(`[share] Share the link above plus the sign-up code (LOCUS_SIGNUP_CODE) with the people who should have an account.`);
     console.log(`[share] The administrator signs in as "admin" with LOCUS_ADMIN_PASSCODE.`);
   } else {
     console.log(`[share] Share the link above plus the LOCUS_PASSCODE with whoever needs it.`);

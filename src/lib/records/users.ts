@@ -146,7 +146,7 @@ export async function resetPasscode(db: Database.Database, id: number): Promise<
 /** A user changing their own passcode (must know the current one). Other devices are signed out; the caller gets the new token version. */
 export async function changeOwnPasscode(db: Database.Database, id: number, current: string, next: string): Promise<number> {
   const raw = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'user'").get(id) as Raw | undefined;
-  if (!raw?.passcode_hash || !(await verifyPasscode(current, raw.passcode_hash))) throw new UserError("wrong-passcode", "That isn't your current passcode.");
+  if (!raw?.passcode_hash || !(await verifyPasscode(current, raw.passcode_hash))) throw new UserError("wrong-passcode", "That isn't your current password.");
   await setPasscode(db, id, next);
   return getUser(db, id)!.tokenVersion;
 }

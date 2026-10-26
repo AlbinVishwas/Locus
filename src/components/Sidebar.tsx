@@ -123,6 +123,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               <AdminLink href="/activity">Activity</AdminLink>
             </div>
           )}
+          {usersEnabled && username && !isAdmin && <AdminLink href="/account">Change password</AdminLink>}
           {usersEnabled && username && (
             <p className="truncate px-2.5 pb-1 text-[12px] text-secondary">Signed in as {username}</p>
           )}

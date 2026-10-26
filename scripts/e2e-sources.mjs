@@ -26,7 +26,7 @@ async function signUp(page, base, username, passcode, code) {
   await page.goto(`${base}/login`);
   await page.click('button:has-text("Create an account")');
   await page.fill('input[placeholder="Username"]', username);
-  await page.fill('input[placeholder^="Choose a passcode"]', passcode);
+  await page.fill('input[placeholder^="Choose a password"]', passcode);
   await page.fill('input[placeholder="Sign-up code"]', code);
   await page.click('button[type="submit"]');
   await page.waitForURL(`${base}/`, { timeout: 15000 });
@@ -94,7 +94,7 @@ async function main() {
     await anon.goto(`${base}/login`);
     await anon.click('button:has-text("Create an account")');
     await anon.fill('input[placeholder="Username"]', "mallory");
-    await anon.fill('input[placeholder^="Choose a passcode"]', "a good long passcode");
+    await anon.fill('input[placeholder^="Choose a password"]', "a good long passcode");
     await anon.fill('input[placeholder="Sign-up code"]', "wrong-code");
     await anon.click('button[type="submit"]');
     await anon.waitForSelector("text=/code/i");
@@ -304,6 +304,19 @@ async function main() {
     const carol = await carolCtx.newPage();
     await signIn(carol, base, "carol", passcode);
     check("the new user can sign in", carol.url() === `${base}/`);
+    await carol.waitForSelector("textarea");
+    await carol.getByRole("link", { name: "Change password" }).click();
+    await carol.waitForURL(`${base}/account`);
+    await carol.getByLabel("Current password").fill(passcode);
+    await carol.getByLabel("New password", { exact: true }).fill("carol new password 7");
+    await carol.getByLabel("New password again").fill("carol new password 7");
+    await carol.click('button:has-text("Change password")');
+    await carol.locator("text=Your password has been changed").waitFor();
+    const carol2 = await (await browser.newContext()).newPage();
+    await signIn(carol2, base, "carol", "carol new password 7");
+    check("Change password (sidebar link → /account) works, and the new password signs in", carol2.url() === `${base}/`);
+    const oldPw = await carol2.request.post(`${base}/api/login`, { data: { username: "carol", passcode } });
+    check("…and the old one no longer does", oldPw.status() === 401);
     await admin.locator("tr", { hasText: "alice" }).locator('button:has-text("Uploads")').click();
     await admin.waitForSelector("text=po-1.pdf");
     check("the admin can see what alice uploaded", true);

@@ -146,7 +146,7 @@ function LoginForm() {
               autoComplete={creating ? "new-password" : "current-password"}
               value={passcode}
               onChange={(e) => setPasscode(e.target.value)}
-              placeholder={creating ? "Choose a passcode (8+ characters)" : "Passcode"}
+              placeholder={creating ? "Choose a password (8+ characters)" : "Password"}
               className={input}
             />
             {users && creating && mode.signup === "code" && (
@@ -185,6 +185,11 @@ function LoginForm() {
               >
                 {creating ? "I already have an account" : "Create an account"}
               </button>
+            )}
+            {!creating && (
+              <p className="text-[12px] leading-snug text-secondary">
+                Use the username and password you were given. The old shared passcode no longer works.
+              </p>
             )}
             <p className="text-[12px] leading-snug text-secondary">
               Searches are logged for the administrator.

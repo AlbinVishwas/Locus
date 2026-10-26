@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   const user = gate.user;
   if (!user) return new Response("Not found", { status: 404 });
   if (user.role === "admin") {
-    return Response.json({ ok: false, error: "The admin passcode is set in .env.local (LOCUS_ADMIN_PASSCODE), not here." }, { status: 400 });
+    return Response.json({ ok: false, error: "The admin password is set in .env.local (LOCUS_ADMIN_PASSCODE), not here." }, { status: 400 });
   }
   let body: { current?: unknown; next?: unknown };
   try {
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "Invalid request" }, { status: 400 });
   }
   if (typeof body?.current !== "string" || typeof body?.next !== "string") {
-    return Response.json({ ok: false, error: "Enter your current passcode and a new one." }, { status: 400 });
+    return Response.json({ ok: false, error: "Enter your current password and a new one." }, { status: 400 });
   }
   const db = getRecordsDb();
   try {
