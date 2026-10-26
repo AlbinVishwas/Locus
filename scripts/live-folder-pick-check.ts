@@ -47,6 +47,14 @@ async function main() {
   } finally {
     await browser.close();
     fs.rmSync(fixtures, { recursive: true, force: true });
+    // Whatever the run left behind (a crashed run included): every session the two accounts own goes, files and index rows with it.
+    const { deleteConversationUploads } = await import("../src/lib/uploads/pipeline");
+    for (const n of names) {
+      const u = findUserByName(db, n);
+      if (!u) continue;
+      const ids = db.prepare("SELECT conversation_id FROM conversation_owners WHERE user_id = ?").pluck().all(u.id) as string[];
+      for (const id of ids) await deleteConversationUploads(id);
+    }
     for (const n of names) {
       const u = findUserByName(db, n);
       if (u) removeUser(db, u.id);

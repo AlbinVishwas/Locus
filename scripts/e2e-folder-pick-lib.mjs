@@ -143,6 +143,8 @@ export async function runFolderPickChecks({ fixtures, loginA, loginB, shotsDir =
   // ---------------------------------------------------------------- alice
   const a = await loginA();
   const page = a.page;
+  // When this file is loaded through tsx, esbuild wraps inner functions in a __name() helper that the page doesn't have.
+  await a.ctx.addInitScript("window.__name = (f) => f;");
   const uploadPosts = [];
   page.on("request", (r) => {
     if (r.method() === "POST" && new URL(r.url()).pathname === "/api/uploads") uploadPosts.push(r.url());
