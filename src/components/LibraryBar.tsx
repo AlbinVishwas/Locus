@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getLibraryStatus, type LibraryStatus } from "@/lib/libraryClient";
-import { setSearchScope, setSearchSource, useSearchScope, useSearchSource, type SearchScope } from "@/lib/searchScope";
+import { setSearchScope, setSearchSource, useSearchScope, useSearchSource } from "@/lib/searchScope";
 import { useFeatures } from "./FeaturesProvider";
 
 /**
@@ -11,6 +11,11 @@ import { useFeatures } from "./FeaturesProvider";
  * sources together) and a status
  * line (documents, pages indexed, still indexing, not indexed, drive
  * connected or not). With the library off this renders nothing at all.
+ *
+ * The scope picker is a pill (ScopePill) styled exactly like the "Upload
+ * documents" and "Find a phrase" chips, so on the empty screen it sits in
+ * that row; the status line (LibraryBar with part="status") goes below it.
+ * In a conversation LibraryBar shows both together above the composer.
  */
 
 const STATUS_POLL_MS = 30_000;
@@ -26,16 +31,8 @@ export function statusText(s: LibraryStatus | null): string {
   );
 }
 
-export default function LibraryBar({ className = "" }: { className?: string }) {
-  const { libraryEnabled, defaultScope = "session", userSources } = useFeatures();
-  if (!libraryEnabled) return null;
-  return <LibraryControls fallback={defaultScope} className={className} mine={userSources === true} />;
-}
-
-function LibraryControls({ fallback, className, mine }: { fallback: SearchScope; className: string; mine: boolean }) {
-  const scope = useSearchScope(fallback);
+function useLibraryStatus(): LibraryStatus | null {
   const [status, setStatus] = useState<LibraryStatus | null>(null);
-
   useEffect(() => {
     let alive = true;
     const load = () =>
@@ -49,7 +46,31 @@ function LibraryControls({ fallback, className, mine }: { fallback: SearchScope;
       clearInterval(timer);
     };
   }, []);
+  return status;
+}
 
+/** Same look as ChipButton in ChatInput.tsx. */
+const PILL =
+  "relative flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[13px] text-secondary hover:border-composer-line hover:text-primary focus-within:border-composer-line focus-within:text-primary";
+
+export default function LibraryBar({ className = "", part = "all" }: { className?: string; part?: "all" | "status" }) {
+  const { libraryEnabled } = useFeatures();
+  if (!libraryEnabled) return null;
+  return <LibraryControls className={className} part={part} />;
+}
+
+/** Just the scope picker, as a chip. Renders nothing with the library off. */
+export function ScopePill() {
+  const { libraryEnabled } = useFeatures();
+  if (!libraryEnabled) return null;
+  return <ScopeSelect />;
+}
+
+function ScopeSelect() {
+  const { defaultScope = "session", userSources } = useFeatures();
+  const mine = userSources === true;
+  const scope = useSearchScope(defaultScope);
+  const status = useLibraryStatus();
   const source = useSearchSource();
   const sources = status?.sources ?? [];
   // A remembered source that has since been removed falls back to "All sources".
@@ -70,14 +91,14 @@ function LibraryControls({ fallback, className, mine }: { fallback: SearchScope;
     }
   };
 
-  const disconnected = status !== null && !status.connected;
   return (
-    <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[12px] text-secondary ${className}`}>
+    <label className={PILL}>
+      <FolderIcon />
       <select
         aria-label="Search in"
         value={value}
         onChange={(e) => choose(e.target.value)}
-        className="max-w-full cursor-pointer rounded-full border border-line bg-page px-3 py-1.5 text-[12px] text-primary outline-none hover:bg-surface"
+        className="max-w-[60vw] cursor-pointer appearance-none truncate bg-transparent pr-4 [field-sizing:content] text-[13px] text-inherit outline-none"
       >
         <option value="all">{mine ? "All my folders" : "All sources"}</option>
         {sources.length > 0 && (
@@ -92,9 +113,42 @@ function LibraryControls({ fallback, className, mine }: { fallback: SearchScope;
         <option value="session">My uploads</option>
         <option value="both">{mine ? "My uploads and all my folders" : "My uploads and all sources"}</option>
       </select>
-      <p data-testid="library-status" className={disconnected ? "text-warm" : undefined}>
-        {statusText(status)}
-      </p>
+      <ChevronIcon />
+    </label>
+  );
+}
+
+function LibraryControls({ className, part }: { className: string; part: "all" | "status" }) {
+  const status = useLibraryStatus();
+  const disconnected = status !== null && !status.connected;
+  const line = (
+    <p data-testid="library-status" className={disconnected ? "text-warm" : undefined}>
+      {statusText(status)}
+    </p>
+  );
+  if (part === "status") {
+    return <div className={`text-center text-[12px] text-secondary ${className}`}>{line}</div>;
+  }
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[12px] text-secondary ${className}`}>
+      <ScopeSelect />
+      {line}
     </div>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="pointer-events-none absolute right-2.5 shrink-0">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
   );
 }

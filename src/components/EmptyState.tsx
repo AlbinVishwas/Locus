@@ -66,7 +66,7 @@ export default function EmptyState({
           onAttachFiles={onAttachFiles}
           onRemoveFile={onRemoveFile}
         />
-        <LibraryBar className="mt-4 w-full max-w-[720px]" />
+        <LibraryBar part="status" className="mt-3 w-full max-w-[720px]" />
         <p className="mt-6 text-center text-[13px] text-secondary">
           Runs on this laptop. Uploaded files stay private to their{" "}
           {chatEnabled ? "conversation" : "session"}.

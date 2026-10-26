@@ -1,5 +1,6 @@
 "use client";
 
+import { ScopePill } from "./LibraryBar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConversationFile } from "@/lib/uploadsClient";
 import AttachmentList, { type InProgressUpload } from "./AttachmentList";
@@ -212,6 +213,8 @@ export default function ChatInput({
       <ChipButton onClick={insertQuotePair} icon={<QuoteIcon />}>
         {chatEnabled ? "Find a phrase in files" : "Find a phrase"}
       </ChipButton>
+      {/* Where to search (library on only): the same pill as the others. */}
+      <ScopePill />
       {/* Reading a link is a model feature (urlContext.ts feeds the page
           to LM Studio), so it goes away with chat. */}
       {chatEnabled && (
