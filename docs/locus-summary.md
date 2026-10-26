@@ -68,7 +68,7 @@ Full details: [docs/sharing.md](sharing.md).
   tender PDFs into a deployable package. There's now an automated check
   (`npm run verify:no-data-leak`) that fails loudly if this ever happens
   again.
-- **385 automated tests pass**, along with type-checking, linting, and a
+- **732 automated tests pass**, along with type-checking, linting, and a
   production build.
 
 ## New: accounts, a Sources page, and a library that lives on the laptop

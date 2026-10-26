@@ -19,8 +19,8 @@ import { chromium } from "playwright";
  *   npm run e2e:library:setup -- $D/data
  *   LOCUS_LIBRARY_ENABLED=true LOCUS_DATA_DIR=$D/data \
  *     LOCUS_PASSCODE=test-pass LOCUS_ENABLE_UPLOADS=true LM_STUDIO_BASE_URL=http://127.0.0.1:1239/v1 \
- *     SEARCH_INDEX_PATH=$D/index/search.db UPLOADS_DIR=$D/uploads npx next start -p 3100
- *   E2E_BASE_URL=http://localhost:3100 E2E_PASSCODE=test-pass E2E_DATA_DIR=$D/data npm run e2e:library
+ *     LOCUS_APP_DIR=$D/app SEARCH_INDEX_PATH=$D/index/search.db UPLOADS_DIR=$D/uploads npx next start -p 3100
+ *   E2E_BASE_URL=http://localhost:3100 E2E_PASSCODE=test-pass E2E_DATA_DIR=$D/data E2E_APP_DIR=$D/app npm run e2e:library
  *
  * E2E_CHAT=true runs the chat-on variant instead (the server started with
  * LOCUS_CHAT_ENABLED=true and a real LM Studio): the library card appears
@@ -176,6 +176,17 @@ async function main() {
   check("the chosen scope survives a reload", (await chosenScope(page)) === "My uploads and all sources");
 
   // --- the drive goes away, then comes back ---
+  // The library normally lives on the Mac's own disk, where a missing marker just means "nothing indexed yet".
+  // "Drive not connected" is for a library on a drive that can be unplugged, which the indexer notes in the
+  // app's folder; the server for this run is started with LOCUS_APP_DIR=$E2E_APP_DIR so the note can be made here.
+  const APP_DIR = process.env.E2E_APP_DIR;
+  if (!APP_DIR) {
+    console.error("Set E2E_APP_DIR to the LOCUS_APP_DIR the server was started with (see the usage at the top).");
+    process.exit(1);
+  }
+  fs.mkdirSync(APP_DIR, { recursive: true });
+  const locationNote = path.join(APP_DIR, "library-location.json");
+  fs.writeFileSync(locationNote, JSON.stringify({ dataDir: DATA_DIR, external: true, volumeName: "e2e-drive", volumeUuid: "E2E", at: new Date().toISOString() }));
   const marker = path.join(DATA_DIR, ".locus-data-dir");
   fs.renameSync(marker, `${marker}.away`);
   try {
@@ -186,6 +197,7 @@ async function main() {
     check("…and so does the status line", (await page.locator('[data-testid="library-status"]').innerText()) === "Library drive not connected");
   } finally {
     fs.renameSync(`${marker}.away`, marker);
+    fs.rmSync(locationNote, { force: true });
   }
   const back = await sendAndWait(page, "Spectrophotometer");
   check("drive back: library results again, no restart needed", back.includes("Bidding_docs-2026-09-16-04_46_27.pdf"));
