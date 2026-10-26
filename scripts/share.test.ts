@@ -103,6 +103,34 @@ afterEach(() => {
   fs.rmSync(work, { recursive: true, force: true });
 });
 
+describe("npm run share: the Sources indexer", () => {
+  it("with the library and the admin area set up, generates LOCUS_SECRETS_KEY and starts the worker; with them off it does neither", async () => {
+    installFakes("recovers");
+    // A stand-in `node` that records how the worker was started and then just stays alive.
+    fake("node", `echo "$@" >> "${record}/worker.args"; exec sleep 600`);
+    const on = await runShare(
+      { LOCUS_USERS_ENABLED: "true", LOCUS_ADMIN_PASSCODE: "admin-passcode", LOCUS_LIBRARY_ENABLED: "true", LOCUS_SIGNUP_CODE: "invite" },
+      /administrator signs in as "admin"/
+    );
+    expect(on).toContain("Generated LOCUS_SECRETS_KEY and saved it to .env.local");
+    expect(fs.readFileSync(path.join(work, ".env.local"), "utf8")).toMatch(/^LOCUS_SECRETS_KEY=\S{40,}$/m);
+    expect(on).toContain("Starting the indexer worker");
+    expect(fs.readFileSync(path.join(record, "worker.args"), "utf8")).toContain("scripts/library-worker.ts");
+    expect(on).toContain("sign-up code (LOCUS_SIGNUP_CODE)");
+    expect(on).not.toContain("with whoever needs it");
+  });
+
+  it("leaves things exactly as they were when users mode and the library are off", async () => {
+    installFakes("recovers");
+    fake("node", `echo "$@" >> "${record}/worker.args"; exec sleep 600`);
+    const off = await runShare({}, /Press Ctrl\+C to stop/);
+    expect(off).not.toContain("indexer worker");
+    expect(off).not.toContain("LOCUS_SECRETS_KEY");
+    expect(fs.existsSync(path.join(record, "worker.args"))).toBe(false);
+    expect(off).toContain("Share the link above plus the LOCUS_PASSCODE with whoever needs it.");
+  });
+});
+
 describe("npm run share: QUIC → HTTP/2 fallback", () => {
   it("switches to HTTP/2 when QUIC keeps failing, prints the new URL, and keeps the app running", async () => {
     installFakes("blocked");

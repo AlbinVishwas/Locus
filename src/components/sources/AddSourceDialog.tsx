@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { addSource, testSourceForm, type SourcesResponse, type TestResult } from "@/lib/sourcesClient";
 import Dialog from "./Dialog";
 import FolderBrowser from "./FolderBrowser";
@@ -40,6 +40,11 @@ export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick
   const [result, setResult] = useState<TestResult | null>(null);
   const [busy, setBusy] = useState<"test" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  // The test result can land below the fold of the scrolling panel: bring it into view.
+  useEffect(() => {
+    if (result || error) resultRef.current?.scrollIntoView({ block: "nearest" });
+  }, [result, error]);
   const tabRefs = useRef<Record<Kind, HTMLButtonElement | null>>({ folder: null, database: null, drive: null });
 
   const dirty = [name, path, host, database, user, password, file, table, link, conn].some((v) => v !== "");
@@ -229,7 +234,9 @@ export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick
                       </>
                     )}
                     <label className={label}>
-                      Table <span className="text-[12px]">(or schema.table)</span>
+                      <span>
+                        Table <span className="text-[12px]">(or schema.table)</span>
+                      </span>
                       <input className={input} autoComplete="off" spellCheck={false} value={table} onChange={(e) => edit(setTable)(e.target.value)} />
                     </label>
                     <fieldset className="flex flex-col gap-2 rounded-lg border border-line p-3">
@@ -277,7 +284,7 @@ export default function AddSourceDialog({ info, onClose, onAdded }: { info: Pick
               </>
             )}
 
-            <div aria-live="polite" className="flex flex-col gap-2">
+            <div ref={resultRef} aria-live="polite" className="flex flex-col gap-2">
               {result && (
                 <div className={`rounded-lg border p-3 text-[13px] ${result.ok ? "border-line text-primary" : "border-line text-red-400"}`}>
                   <p>

@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { isChatEnabled } from "../src/config/features";
+import { isLibraryEnabled } from "../src/lib/library/config";
+import { adminEnabled, usersEnabled } from "../src/lib/users/mode";
 
 /**
  * `npm run share`: everything needed to hand someone a working, public
@@ -134,7 +136,12 @@ const ENV_LOCAL_PATH = path.resolve(".env.local");
  * single command: this only ever needs to happen once per machine.
  */
 function ensureSessionSecret(): string {
-  const existing = process.env.SESSION_SECRET;
+  return ensureGeneratedEnv("SESSION_SECRET", "Generated SESSION_SECRET and saved it to .env.local (sessions will now survive a restart).");
+}
+
+/** A random value for `name`, kept in .env.local so it's the same on every start. An existing one (environment or file) is left alone. */
+function ensureGeneratedEnv(name: string, note: string): string {
+  const existing = process.env[name];
   if (existing && existing.length > 0) return existing;
 
   let contents = "";
@@ -144,20 +151,21 @@ function ensureSessionSecret(): string {
     // No .env.local yet -- fine, one is created below.
   }
 
-  const match = contents.match(/^SESSION_SECRET=(.*)$/m);
+  const pattern = new RegExp(`^${name}=(.*)$`, "m");
+  const match = contents.match(pattern);
   if (match && match[1].trim().length > 0) return match[1].trim();
 
   const generated = crypto.randomUUID() + crypto.randomUUID();
-  const line = `SESSION_SECRET=${generated}`;
+  const line = `${name}=${generated}`;
   if (match) {
-    // An empty `SESSION_SECRET=` line already exists -- replace it in place
+    // An empty `NAME=` line already exists -- replace it in place
     // rather than appending a second, conflicting one.
-    contents = contents.replace(/^SESSION_SECRET=.*$/m, line);
+    contents = contents.replace(new RegExp(`^${name}=.*$`, "m"), line);
   } else {
     contents = contents.length > 0 && !contents.endsWith("\n") ? `${contents}\n${line}\n` : `${contents}${line}\n`;
   }
   fs.writeFileSync(ENV_LOCAL_PATH, contents);
-  log("Generated SESSION_SECRET and saved it to .env.local (sessions will now survive a restart).");
+  log(note);
   return generated;
 }
 
@@ -325,6 +333,12 @@ async function main() {
   }
 
   const sessionSecret = ensureSessionSecret();
+  // The Sources page needs the indexer worker (and a key to seal database passwords with). Only when the
+  // library and the admin area are both set up: otherwise nothing here changes.
+  const withSources = isLibraryEnabled() && adminEnabled();
+  const secretsKey = withSources
+    ? ensureGeneratedEnv("LOCUS_SECRETS_KEY", "Generated LOCUS_SECRETS_KEY and saved it to .env.local (saved database passwords are encrypted with it; keep it with your backups).")
+    : null;
 
   log("Building…");
   const build = spawn("npm", ["run", "build"], { stdio: "inherit" });
@@ -340,6 +354,7 @@ async function main() {
     // URL reading only ever feeds the model, so it's on only with chat.
     LOCAL_CHAT_ENABLE_URL_CONTEXT: chatEnabled ? "true" : "false",
     SESSION_SECRET: sessionSecret,
+    ...(secretsKey ? { LOCUS_SECRETS_KEY: secretsKey } : {}),
     // This machine is the one being shared, so LM Studio is always local
     // to it -- never through a second tunnel, whatever .env.local has.
     LM_STUDIO_BASE_URL,
@@ -349,14 +364,31 @@ async function main() {
     env: serverEnv,
   });
 
+  // The indexer worker: it watches the sources registry and indexes what the Sources page adds. It
+  // lives and dies with this script; the app keeps working (search, uploads) if it stops.
+  let worker: ChildProcess | null = null;
+  let stopping = false;
+  if (withSources) {
+    log("Starting the indexer worker (it indexes the sources added on the Sources page)…");
+    worker = spawn("node", ["--import", "tsx", "scripts/library-worker.ts"], {
+      stdio: "inherit",
+      env: { ...serverEnv, TSX_DISABLE_CACHE: "1" },
+    });
+    worker.on("exit", (code, signal) => {
+      if (!stopping) log(`The indexer worker stopped (${signal ?? `exit ${code}`}). Searching still works; start it again with: npm run library:worker`);
+    });
+  }
+
   const cleanup = (() => {
     let done = false;
     return (tunnelProc?: ChildProcess, caffeinateProc?: ChildProcess) => {
       if (done) return;
       done = true;
+      stopping = true;
       log("Stopping…");
       tunnelProc?.kill();
       caffeinateProc?.kill();
+      worker?.kill("SIGTERM");
       server.kill();
     };
   })();
@@ -410,7 +442,12 @@ async function main() {
   console.log("");
   console.log(`[share] Tunnel URL: ${tunnel.url}`);
   updateVercelRedirect(tunnel.url);
-  console.log(`[share] Share the link above plus the LOCUS_PASSCODE with whoever needs it.`);
+  if (usersEnabled()) {
+    console.log(`[share] Share the link above plus the sign-up code (LOCUS_SIGNUP_CODE) with the people who should have an account.`);
+    console.log(`[share] The administrator signs in as "admin" with LOCUS_ADMIN_PASSCODE.`);
+  } else {
+    console.log(`[share] Share the link above plus the LOCUS_PASSCODE with whoever needs it.`);
+  }
   console.log(`[share] Press Ctrl+C to stop.`);
   console.log("");
 
