@@ -143,7 +143,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
 function AdminLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link href={href} className="rounded-lg px-2.5 py-2 text-[13px] text-secondary hover:bg-surface-hover">
+    <Link href={href} className="block rounded-lg px-2.5 py-2 text-[13px] text-secondary hover:bg-surface-hover">
       {children}
     </Link>
   );

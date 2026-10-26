@@ -1,6 +1,7 @@
 "use client";
 
-import { ScopePill } from "./LibraryBar";
+import { FolderPill, FolderStatus, useFolderPick } from "./FolderPicker";
+import { useFolderScope } from "@/lib/folderScope";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConversationFile } from "@/lib/uploadsClient";
 import AttachmentList, { type InProgressUpload } from "./AttachmentList";
@@ -41,6 +42,8 @@ export default function ChatInput({
   variant = "pinned",
 }: ChatInputProps) {
   const { chatEnabled } = useFeatures();
+  const folder = useFolderPick();
+  const activeFolder = useFolderScope();
   const [value, setValue] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   // Cosmetic only: "Read a link" swaps the placeholder to hint at what to
@@ -213,8 +216,8 @@ export default function ChatInput({
       <ChipButton onClick={insertQuotePair} icon={<QuoteIcon />}>
         {chatEnabled ? "Find a phrase in files" : "Find a phrase"}
       </ChipButton>
-      {/* Where to search (library on only): the same pill as the others. */}
-      <ScopePill />
+      {/* Search a folder from this device: picks it, uploads its PDFs, then limits searches to it. */}
+      <FolderPill folder={folder} />
       {/* Reading a link is a model feature (urlContext.ts feeds the page
           to LM Studio), so it goes away with chat. */}
       {chatEnabled && (
@@ -243,6 +246,7 @@ export default function ChatInput({
       <div className="w-full px-4" {...dragHandlers}>
         <div className="mx-auto max-w-[720px]">
           <AttachmentList files={files} uploading={uploading} onRemoveFile={onRemoveFile} />
+          <FolderStatus folder={folder} active={activeFolder} />
           {composerBar}
           {chipRow}
         </div>
@@ -254,6 +258,10 @@ export default function ChatInput({
     <div className="px-4 pb-6 pt-2 sm:px-6" {...dragHandlers}>
       <div className="mx-auto max-w-[760px]">
         <AttachmentList files={files} uploading={uploading} onRemoveFile={onRemoveFile} />
+        <FolderStatus folder={folder} active={activeFolder} />
+        <div className="mb-2 flex justify-center">
+          <FolderPill folder={folder} />
+        </div>
         {composerBar}
       </div>
     </div>

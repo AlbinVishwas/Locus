@@ -54,6 +54,8 @@ export interface DisplayMessage {
    * never sends it back to the model. See documentSearch.ts.
    */
   searchResult?: SearchResult | null;
+  /** The upload session `searchResult` came from, when that wasn't the conversation's own (a picked folder), so "show more" asks the same one. */
+  searchConversationId?: string;
   /** The loose-mode fallback the user can switch to with one click, when `searchResult` found nothing under exact punctuation. */
   looseAlternative?: SearchResult | null;
   /**

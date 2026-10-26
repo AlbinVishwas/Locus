@@ -7,6 +7,7 @@ import { getAppConfig } from "@/lib/configClient";
 import { toHistoryPayload } from "@/lib/history";
 import { searchLibrary } from "@/lib/libraryClient";
 import { getSearchScope, getSearchSource, type SearchScope } from "@/lib/searchScope";
+import { getFolderScope } from "@/lib/folderScope";
 import { searchSession } from "@/lib/sessionSearchClient";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import {
@@ -299,7 +300,8 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       abortControllerRef.current = controller;
       // The library card sits above the reply like the session card; the
       // model is never shown either.
-      const libraryRun = currentScope() !== "session" ? runLibrarySearch(assistantId, trimmed, controller.signal) : null;
+      const pickedFolder = getFolderScope();
+      const libraryRun = !pickedFolder && currentScope() !== "session" ? runLibrarySearch(assistantId, trimmed, controller.signal) : null;
 
       let reasoningStartedAt: number | null = null;
       let reasoningEndedAt: number | null = null;
@@ -313,7 +315,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: historyPayload, conversationId: conversation.id }),
+          body: JSON.stringify({ messages: historyPayload, conversationId: pickedFolder?.conversationId ?? conversation.id }),
           signal: controller.signal,
         });
 
@@ -451,16 +453,19 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const scope = currentScope();
+      // A picked folder limits the search to that folder's own files: no other uploads, no library.
+      const folder = getFolderScope();
+      const scope = folder ? "session" : currentScope();
       try {
         // "Library" or "Both": the library search runs alongside.
         const libraryRun = scope !== "session" ? runLibrarySearch(assistantId, trimmed, controller.signal) : null;
         if (scope !== "library") {
-          const outcome = await searchSession(conversation.id, trimmed, controller.signal);
+          const outcome = await searchSession(folder?.conversationId ?? conversation.id, trimmed, controller.signal);
           if (outcome.status === "ok") {
             patchAssistantMessage(assistantId, (m) => ({
               ...m,
               searchResult: outcome.result,
+              searchConversationId: folder?.conversationId,
               looseAlternative: outcome.looseAlternative,
             }));
           } else {
@@ -539,7 +544,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           conversationId={conversation.id}
         />
       </div>
-      <LibraryBar className="mx-auto w-full max-w-[760px] px-4 pt-2 sm:px-6" />
+      <LibraryBar part="status" className="mx-auto w-full max-w-[760px] px-4 pt-2 sm:px-6" />
       <ChatInput
         isStreaming={isStreaming}
         onSend={send}

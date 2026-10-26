@@ -61,6 +61,32 @@ export function maxFilesPerConversation(): number {
   return intEnv("MAX_FILES_PER_CONVERSATION", DEFAULT_MAX_FILES_PER_CONVERSATION);
 }
 
+/**
+ * 500: a folder pick uploads every PDF in it, one request each, so the number
+ * is bounded to keep one pick to a few hours of OCR at worst and a single
+ * account's index reviewable. A bigger collection is a job for the admin's
+ * library folders (Sources), which index on the laptop itself.
+ */
+const DEFAULT_MAX_FOLDER_FILES = 500;
+
+/**
+ * 90 MB: a Cloudflare quick tunnel refuses request bodies over ~100 MB, and a
+ * file's multipart envelope adds to it, so a picked folder's files are held a
+ * little under that (and never above MAX_UPLOAD_FILE_BYTES).
+ */
+const TUNNEL_SAFE_FILE_BYTES = 90 * 1024 * 1024;
+
+export function maxFolderFiles(): number {
+  return intEnv("MAX_FOLDER_FILES", DEFAULT_MAX_FOLDER_FILES);
+}
+
+export function maxFolderFileBytes(): number {
+  return Math.min(maxUploadFileBytes(), TUNNEL_SAFE_FILE_BYTES);
+}
+
+/** Folder pick sessions use ids that start with this; see /api/folders. */
+export const FOLDER_ID_PREFIX = "fld_";
+
 export function storageCapBytes(): number {
   return intEnv("STORAGE_CAP_BYTES", DEFAULT_STORAGE_CAP_BYTES);
 }

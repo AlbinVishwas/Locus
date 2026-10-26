@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { getLibraryStatus, type LibraryStatus } from "@/lib/libraryClient";
+import { useFolderScope } from "@/lib/folderScope";
 import { setSearchScope, setSearchSource, useSearchScope, useSearchSource } from "@/lib/searchScope";
 import { useFeatures } from "./FeaturesProvider";
 
@@ -66,13 +67,54 @@ export function ScopePill() {
   return <ScopeSelect />;
 }
 
-function ScopeSelect() {
+const SOURCES_CACHE_KEY = "locus.sourceList";
+type SourceList = NonNullable<LibraryStatus["sources"]>;
+
+/**
+ * The library's sources for the "Search in" selector. The live list comes with the status poll, so
+ * right after a reload there is none yet; the last one seen (per browser, a convenience) fills the gap,
+ * so a remembered choice isn't shown as "All sources" for a moment before it settles.
+ */
+function useRememberedSources(status: LibraryStatus | null): SourceList {
+  // A string snapshot, so React sees a stable value; "[]" on the server, the stored list once on the client.
+  const raw = useSyncExternalStore(
+    () => () => {},
+    () => {
+      try {
+        return window.localStorage.getItem(SOURCES_CACHE_KEY) ?? "[]";
+      } catch {
+        return "[]";
+      }
+    },
+    () => "[]"
+  );
+  const cached = useMemo<SourceList>(() => {
+    try {
+      const v = JSON.parse(raw) as SourceList;
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  }, [raw]);
+  const live = status?.sources;
+  useEffect(() => {
+    if (!live) return;
+    try {
+      window.localStorage.setItem(SOURCES_CACHE_KEY, JSON.stringify(live));
+    } catch {
+      // storage blocked: the list is just fetched again next time
+    }
+  }, [live]);
+  return live ?? cached;
+}
+
+function ScopeSelect({ compact = false }: { compact?: boolean }) {
   const { defaultScope = "session", userSources } = useFeatures();
   const mine = userSources === true;
   const scope = useSearchScope(defaultScope);
   const status = useLibraryStatus();
   const source = useSearchSource();
-  const sources = status?.sources ?? [];
+  const sources = useRememberedSources(status);
   // A remembered source that has since been removed falls back to "All sources".
   const known = source !== null && sources.some((x) => x.id === source);
   const value = scope === "session" ? "session" : scope === "both" ? "both" : known ? `source:${source}` : "all";
@@ -92,14 +134,14 @@ function ScopeSelect() {
   };
 
   return (
-    <label className={PILL}>
-      <FolderIcon />
+    <label className={compact ? "relative inline-flex items-center gap-1.5 text-[12px] text-secondary focus-within:text-primary hover:text-primary" : PILL}>
+      {compact ? <span>Search in</span> : <FolderIcon />}
       <select
         aria-label="Search in"
         data-no-focus-ring
         value={value}
         onChange={(e) => choose(e.target.value)}
-        className="max-w-[60vw] cursor-pointer appearance-none truncate bg-transparent pr-4 [field-sizing:content] text-[13px] text-inherit outline-none"
+        className={`max-w-[60vw] cursor-pointer appearance-none truncate bg-transparent pr-4 [field-sizing:content] text-inherit outline-none ${compact ? "text-[12px] underline decoration-line underline-offset-2" : "text-[13px]"}`}
       >
         <option value="all">{mine ? "All my folders" : "All sources"}</option>
         {sources.length > 0 && (
@@ -114,9 +156,14 @@ function ScopeSelect() {
         <option value="session">My uploads</option>
         <option value="both">{mine ? "My uploads and all my folders" : "My uploads and all sources"}</option>
       </select>
-      <ChevronIcon />
+      <ChevronIcon compact={compact} />
     </label>
   );
+}
+
+function PickedFolderAware() {
+  const folder = useFolderScope();
+  return folder ? null : <ScopeSelect compact />;
 }
 
 function LibraryControls({ className, part }: { className: string; part: "all" | "status" }) {
@@ -128,7 +175,14 @@ function LibraryControls({ className, part }: { className: string; part: "all" |
     </p>
   );
   if (part === "status") {
-    return <div className={`text-center text-[12px] text-secondary ${className}`}>{line}</div>;
+    // The scope switch sits on its own line under the status, never over it. A picked folder
+    // replaces it: while that chip is up, searches cover that folder only.
+    return (
+      <div className={`flex flex-col items-center gap-1.5 text-center text-[12px] text-secondary ${className}`}>
+        {line}
+        <PickedFolderAware />
+      </div>
+    );
   }
   return (
     <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[12px] text-secondary ${className}`}>
@@ -146,9 +200,9 @@ function FolderIcon() {
   );
 }
 
-function ChevronIcon() {
+function ChevronIcon({ compact = false }: { compact?: boolean }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="pointer-events-none absolute right-2.5 shrink-0">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={`pointer-events-none absolute shrink-0 ${compact ? "right-0" : "right-2.5"}`}>
       <path d="m6 9 6 6 6-6" />
     </svg>
   );

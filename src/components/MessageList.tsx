@@ -25,7 +25,7 @@ export default function MessageList({
           // Only the streaming message can be in a read phase.
           fetchingUrls={message.isStreaming ? fetchingUrls : null}
           fileCount={fileCount}
-          conversationId={conversationId}
+          conversationId={message.searchConversationId ?? conversationId}
         />
       ))}
     </div>

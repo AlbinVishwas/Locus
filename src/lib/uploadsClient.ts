@@ -70,11 +70,14 @@ export async function uploadFile(
   conversationId: string,
   file: File,
   onEvent: (event: UploadStageEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** A picked folder's file: its path inside the folder, shown with its results. */
+  path?: string
 ): Promise<void> {
   const form = new FormData();
   form.set("conversationId", conversationId);
   form.set("file", file);
+  if (path) form.set("path", path);
 
   const res = await fetch("/api/uploads", { method: "POST", body: form, signal });
   if (!res.ok || !res.body) {

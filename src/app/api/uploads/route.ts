@@ -8,7 +8,7 @@ import { activityFor, authorizeConversation } from "@/lib/session";
 import { userUploadLimitBytes } from "@/lib/users/mode";
 import { indexPath } from "@/lib/search/indexDb";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
-import { maxFilesPerConversation, maxUploadFileBytes, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
+import { FOLDER_ID_PREFIX, maxFilesPerConversation, maxFolderFiles, maxUploadFileBytes, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
 import { deleteConversationUploads, deleteSingleUpload, indexUpload, type UploadStage } from "@/lib/uploads/pipeline";
 import { measureStorageUsage } from "@/lib/uploads/storage";
 import { sanitizeOriginalFilename, validateUploadBytes } from "@/lib/uploads/validate";
@@ -83,10 +83,14 @@ export async function POST(req: Request) {
     }
   }
 
+  // A picked folder is its own session (see /api/folders) with its own, larger file limit.
+  const isFolder = (conversationId as string).startsWith(FOLDER_ID_PREFIX);
   const existing = uploadedDocuments(getWritableDb(), conversationId as string);
-  if (existing.length >= maxFilesPerConversation()) {
+  if (existing.length >= (isFolder ? maxFolderFiles() : maxFilesPerConversation())) {
     return new Response(
-      `This conversation already has ${existing.length} files, the limit per conversation`,
+      isFolder
+        ? `This folder already has ${existing.length} files, the most one pick takes. Ask the administrator to add it as a library folder instead.`
+        : `This conversation already has ${existing.length} files, the limit per conversation`,
       { status: 400 }
     );
   }
@@ -101,7 +105,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const originalFilename = sanitizeOriginalFilename(file.name || "document.pdf");
+  // A picked folder's files are named by their path inside the folder, so results show where each one sits.
+  const pickedPath = formData.get("path");
+  const originalFilename = sanitizeOriginalFilename(isFolder && typeof pickedPath === "string" && pickedPath ? pickedPath : file.name || "document.pdf");
   const encoder = new TextEncoder();
 
   // Set once the browser goes away (tab closed, reload, tunnel dropped the

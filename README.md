@@ -110,6 +110,7 @@ Other commands:
 | `npm run verify:no-data-leak` | After `npm run build`: confirms no file-tracing manifest references `data/` (client PDFs, the index, uploads never belong in a deployable bundle) |
 | `npm run e2e` | End to end through a real (headless) browser with **chat off**: search-tool wording and hidden model pieces, the no-files prompt, upload, plain/quoted/zero-match/punctuation-hint searches, deleting a session deletes its files -- and proof that nothing reached `/api/chat`, `/api/title` or LM Studio (a stand-in LM Studio on port 1239 counts requests). Needs a chat-off server already running with `LOCUS_ENABLE_UPLOADS=true`, a known passcode and `LM_STUDIO_BASE_URL=http://127.0.0.1:1239/v1`; usage at the top of `scripts/e2e-search-only.mjs`. |
 | `npm run e2e:chat` | The same kind of run with **chat on**: upload, search, a files-less conversation, a normal chat message. Needs a server started with `LOCUS_CHAT_ENABLED=true`: `E2E_BASE_URL=http://localhost:3000 E2E_PASSCODE=... npm run e2e:chat` |
+| `npm run e2e:folder-pick` | **Choose folder** end to end in a scratch Locus: the folder chooser, only PDFs kept, upload progress, the "Searching: …" chip limiting every search to that folder, privacy between accounts, re-pick uploads nothing, the limit messages, and no overlap at 1440/1024/768/390 px. See `docs/folder-pick.md`. Build first. |
 
 Indexer settings (environment variables, all optional):
 
