@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { getLibraryStatus, type LibraryStatus } from "@/lib/libraryClient";
 import { getStorageInfo, type StorageInfo } from "@/lib/uploadsClient";
 import { useConversations } from "./ConversationsProvider";
 import ConversationItem from "./ConversationItem";
@@ -113,6 +114,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         </nav>
 
         <div className="border-t border-line p-3">
+          {libraryEnabled && <LibraryStorageCard />}
           <StorageCard />
           {isAdmin && (
             <div className="mb-1 flex flex-col">
@@ -157,7 +159,7 @@ function LogoMark() {
 
 /** Usage against the storage cap, with a thin cream bar, plus the retention policy in plain words -- so "why did my file disappear" is answered right where files get uploaded, not just in a doc. Renders nothing if uploads are disabled (the endpoint still answers, since measuring disk usage doesn't depend on the flag, but showing a cap for a feature that's off would be confusing) or the request fails. */
 function StorageCard() {
-  const { chatEnabled } = useFeatures();
+  const { chatEnabled, libraryEnabled } = useFeatures();
   const [info, setInfo] = useState<StorageInfo | null>(null);
 
   useEffect(() => {
@@ -170,6 +172,7 @@ function StorageCard() {
 
   return (
     <div className="mb-1 px-2.5 pb-2">
+      {libraryEnabled && <p className="mb-0.5 text-[11px] font-medium text-primary">Sessions</p>}
       <p className="text-[12px] text-secondary">
         {formatGB(info.usedBytes)} GB of {formatGB(info.capBytes)} GB used
       </p>
@@ -177,6 +180,44 @@ function StorageCard() {
         <div className="h-full rounded-full bg-cream" style={{ width: `${pct}%` }} />
       </div>
       <p className="mt-1.5 text-[11px] text-secondary">Remove files or old {chatEnabled ? "chats" : "sessions"} to free space.</p>
+    </div>
+  );
+}
+
+/** The library's own disk use against its cap (and the free-space reserve), from the indexer's last report. Renders nothing until it has reported. */
+function LibraryStorageCard() {
+  const [storage, setStorage] = useState<LibraryStatus["storage"] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      getLibraryStatus()
+        .then((s) => alive && setStorage(s?.storage ?? null))
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+  if (!storage || storage.usedBytes === null || !storage.capBytes) return null;
+  const pct = Math.min(100, (storage.usedBytes / storage.capBytes) * 100);
+  return (
+    <div className="mb-1 px-2.5 pb-2" data-testid="library-storage">
+      <p className="mb-0.5 text-[11px] font-medium text-primary">Library</p>
+      <p className="text-[12px] text-secondary">
+        {formatGB(storage.usedBytes)} GB of {formatGB(storage.capBytes)} GB used
+      </p>
+      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-line" aria-hidden>
+        <div className="h-full rounded-full bg-cream" style={{ width: `${pct}%` }} />
+      </div>
+      <p className={`mt-1.5 text-[11px] ${storage.limit ? "text-warm" : "text-secondary"}`}>
+        {storage.limit
+          ? storage.limit.kind === "cap"
+            ? "Indexing paused: storage limit reached."
+            : "Indexing paused: low disk space."
+          : `${storage.minFreeBytes ? `${formatGB(storage.minFreeBytes)} GB kept free` : ""}${storage.freeBytes !== null ? ` · ${formatGB(storage.freeBytes)} GB free` : ""}`.replace(/^ · /, "")}
+      </p>
     </div>
   );
 }

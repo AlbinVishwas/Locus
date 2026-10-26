@@ -36,11 +36,11 @@ export default function LibraryResultCard({ response, failure }: { response?: Li
     case "too-short":
       return <Notice title="Too short for the library">Type at least 3 characters to search the library.</Notice>;
     case "ok":
-      return <Results initial={response.result} />;
+      return <Results initial={response.result} source={response.source ?? null} />;
   }
 }
 
-function Results({ initial }: { initial: LibrarySearchResult }) {
+function Results({ initial, source }: { initial: LibrarySearchResult; source: string | null }) {
   const [shown, setShown] = useState<LibrarySearchResult>(initial);
   const [hits, setHits] = useState<LibraryHit[]>(initial.hits);
   const [cursor, setCursor] = useState<number | null>(initial.nextCursor);
@@ -52,7 +52,7 @@ function Results({ initial }: { initial: LibrarySearchResult }) {
     setLoading(true);
     setError(null);
     try {
-      const r = await searchLibraryPage(result.query, result.mode, from);
+      const r = await searchLibraryPage(result.query, result.mode, from, source);
       if (r.status !== "ok") {
         setError(r.status === "disconnected" ? "Library drive not connected." : "Couldn't load more results.");
         return;
@@ -129,7 +129,14 @@ function Results({ initial }: { initial: LibrarySearchResult }) {
               <p className="truncate font-medium text-primary" title={g.hits[0].displayName}>
                 {g.hits[0].displayName}
               </p>
-              {g.hits[0].stillIndexing && <Badge title="This document is still being indexed: more of its pages may match later">indexing</Badge>}
+              <span className="flex shrink-0 items-baseline gap-2">
+                {g.hits[0].stillIndexing && <Badge title="This document is still being indexed: more of its pages may match later">indexing</Badge>}
+                {g.hits[0].sourceName && (
+                  <span data-testid="source-chip" className="max-w-[40vw] truncate rounded-full border border-line px-2 py-0.5 text-[11px] text-secondary" title={`Source: ${g.hits[0].sourceName}`}>
+                    {g.hits[0].sourceName}
+                  </span>
+                )}
+              </span>
             </div>
             <ul className="flex flex-col gap-1.5">
               {g.hits.map((hit) => (

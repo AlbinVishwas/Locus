@@ -70,7 +70,7 @@ export async function POST(req: Request) {
   if (body.source !== undefined) {
     if (typeof body.source !== "string" || body.source.length > 200) return new Response("`source` must be a source id", { status: 400 });
     const row = conn.db.prepare("SELECT ordinal, coalesce(name, kind) AS name FROM sources WHERE id = ?").get(body.source) as { ordinal: number | null; name: string } | undefined;
-    if (!row) return json({ status: "ok", result: emptyResult(text, mode, cursor) });
+    if (!row) return json({ status: "ok", result: emptyResult(text, mode, cursor), source: body.source });
     sourceOrdinal = row.ordinal ?? 0;
     scope = `source:${row.name}`;
   }
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     const outcome = librarySearch(conn.db, query, { mode, cursor, sourceOrdinal });
     if (outcome.status === "ok") record({ pages: outcome.result.counts?.pages, documents: outcome.result.counts?.documents });
     else record({ message: outcome.status });
-    return json(outcome);
+    return json(outcome.status === "ok" && typeof body.source === "string" ? { ...outcome, source: body.source } : outcome);
   } catch (err) {
     if (libraryErrorStatus(err) === "disconnected") {
       record({ status: "error", message: "library drive not connected" });

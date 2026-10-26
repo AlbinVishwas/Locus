@@ -2,7 +2,7 @@ import { getLibraryDb } from "@/lib/library/db";
 import { parseSourceInput } from "@/lib/library/sources/admin";
 import { appLibraryConfig, RegistryUnavailable, withRegistry } from "@/lib/library/sources/appRegistry";
 import { addRegistrySource, listRegistry, RegistryError } from "@/lib/library/sources/registry";
-import { SecretError } from "@/lib/library/sources/secrets";
+import { SecretError, secretsKeyFromEnv } from "@/lib/library/sources/secrets";
 import { describeSources, readWorker } from "@/lib/library/sources/view";
 import { logActivity } from "@/lib/records/activity";
 import { getRecordsDb } from "@/lib/records/db";
@@ -11,6 +11,15 @@ import { activityFor, requireAdmin } from "@/lib/session";
 export const runtime = "nodejs";
 
 const noStore = { "Cache-Control": "no-store" };
+
+function secretsConfigured(): boolean {
+  try {
+    secretsKeyFromEnv();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** The Sources page's data: every source with its status, and the indexer's own state and storage numbers. */
 export async function GET(req: Request) {
@@ -24,7 +33,7 @@ export async function GET(req: Request) {
     const sources = withRegistry((registry) => describeSources(listRegistry(registry), library, worker));
     const config = appLibraryConfig();
     return Response.json(
-      { sources, worker, connected: conn.status !== "disconnected", allowedRoots: config.allowedRoots, capBytes: config.maxBytes, minFreeBytes: config.minFreeBytes },
+      { sources, worker, connected: conn.status !== "disconnected", allowedRoots: config.allowedRoots, capBytes: config.maxBytes, minFreeBytes: config.minFreeBytes, driveConfigured: Boolean(process.env.GOOGLE_API_KEY?.trim()), secretsConfigured: secretsConfigured() },
       { headers: noStore }
     );
   } catch (err) {

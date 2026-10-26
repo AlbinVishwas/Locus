@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 
 /**
  * End-to-end through the real UI with the document library ON (chat off):
- * the scope switch and status line, a library-only search (folder paths,
+ * the scope dropdown and status line, a library-only search (folder paths,
  * pages, no session search made), "show more" paging, the too-short and
  * punctuation messages, a "Both" search alongside an uploaded session
  * file, the scope surviving a reload, and the drive being disconnected
@@ -77,7 +77,10 @@ async function sendAndWait(page, text, settle = (t) => !/^Searching/.test(t.trim
   return replies.last().innerText();
 }
 
-const scopeButton = (page, label) => page.locator(`[role="radiogroup"][aria-label="Search in"] button:has-text("${label}")`);
+const SCOPE_LABEL = { "This session": "My uploads", Library: "All sources", Both: "My uploads and all sources" };
+const scopeSelect = (page) => page.locator('select[aria-label="Search in"]');
+const chooseScope = (page, label) => scopeSelect(page).selectOption({ label: SCOPE_LABEL[label] });
+const chosenScope = (page) => scopeSelect(page).locator("option:checked").innerText();
 
 async function main() {
   if (!PASSCODE || (!DATA_DIR && !CHAT)) {
@@ -101,9 +104,9 @@ async function main() {
   await page.waitForFunction(() => /Library: \d|Library drive|Library not set up/.test(document.body.innerText), null, { timeout: 15000 });
 
   // --- the controls ---
-  const labels = await page.locator('[role="radiogroup"][aria-label="Search in"] button').allInnerTexts();
-  check("scope switch shows This session / Library / Both", JSON.stringify(labels) === JSON.stringify(["This session", "Library", "Both"]), labels.join(", "));
-  check("starts on the configured default (This session)", (await scopeButton(page, "This session").getAttribute("aria-checked")) === "true");
+  const labels = await scopeSelect(page).locator("option").allInnerTexts();
+  check("scope dropdown offers All sources, My uploads, and both together", ["All sources", "My uploads", "My uploads and all sources"].every((l) => labels.includes(l)), labels.join(", "));
+  check("starts on the configured default (My uploads)", (await chosenScope(page)) === "My uploads");
   const status = await page.locator('[data-testid="library-status"]').innerText();
   check(
     "status line: documents, pages indexed, still indexing, not indexed, drive connected",
@@ -112,7 +115,7 @@ async function main() {
   );
 
   if (CHAT) {
-    await scopeButton(page, "Library").click();
+    await chooseScope(page, "Library");
     const reply = await sendAndWait(page, "Spectrophotometer");
     const card = await page.locator('[data-testid="library-card"]').last().innerText().catch(() => "");
     check("chat on: the library card appears for the turn", card.includes("Bidding_docs-2026-09-16") && card.includes("Page"), card.slice(0, 120));
@@ -124,7 +127,7 @@ async function main() {
   }
 
   // --- library only ---
-  await scopeButton(page, "Library").click();
+  await chooseScope(page, "Library");
   const sessionCallsBefore = requests.filter((p) => p === "/api/session-search").length;
   const lib = await sendAndWait(page, "Tiruchirappalli");
   check(
@@ -164,13 +167,13 @@ async function main() {
   // --- both: an uploaded session file and the library ---
   await page.locator('input[type="file"]').setInputFiles([SESSION_FILE]);
   await page.waitForFunction(() => /\b3 pages\b/.test(document.body.innerText), null, { timeout: UPLOAD_TIMEOUT_MS });
-  await scopeButton(page, "Both").click();
+  await chooseScope(page, "Both");
   const both = await sendAndWait(page, "bidder");
   check("Both scope: the session card (Annexure_B) and the library card", both.includes("Found on") && both.includes("Annexure_B") && both.includes("Library · found on"), both.slice(0, 200));
 
   await page.reload();
   await page.waitForSelector("textarea");
-  check("the chosen scope survives a reload", (await scopeButton(page, "Both").getAttribute("aria-checked")) === "true");
+  check("the chosen scope survives a reload", (await chosenScope(page)) === "My uploads and all sources");
 
   // --- the drive goes away, then comes back ---
   const marker = path.join(DATA_DIR, ".locus-data-dir");

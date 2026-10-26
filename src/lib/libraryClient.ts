@@ -10,7 +10,7 @@ import type { LibrarySearchResult } from "./library/query";
 export type LibraryUnavailable = "disconnected" | "empty";
 
 export type LibrarySearchResponse =
-  | { status: "ok"; result: LibrarySearchResult }
+  | { status: "ok"; result: LibrarySearchResult; /** Present when the search was limited to one source. */ source?: string }
   | { status: "too-short"; query: string }
   | { status: LibraryUnavailable };
 
@@ -22,6 +22,16 @@ export interface LibraryStatus {
   indexing: number;
   /** Files that couldn't be indexed (failed, skipped as too large, encrypted...). */
   failed: number;
+  /** The library's named sources, for the scope dropdown. Absent until there is one. */
+  sources?: Array<{ id: string; name: string; kind: string }>;
+  /** The indexer's storage numbers. Absent until it has reported. */
+  storage?: {
+    usedBytes: number | null;
+    capBytes: number | null;
+    freeBytes: number | null;
+    minFreeBytes: number | null;
+    limit: { kind: "cap" | "reserve"; message: string } | null;
+  };
 }
 
 async function post(body: object, signal?: AbortSignal): Promise<LibrarySearchResponse> {
@@ -38,13 +48,13 @@ async function post(body: object, signal?: AbortSignal): Promise<LibrarySearchRe
 }
 
 /** One turn's library search: the message's quoted text if any, otherwise the whole message (as session search does). */
-export function searchLibrary(message: string, signal?: AbortSignal): Promise<LibrarySearchResponse> {
-  return post({ message }, signal);
+export function searchLibrary(message: string, signal?: AbortSignal, source?: string | null): Promise<LibrarySearchResponse> {
+  return post({ message, ...(source ? { source } : {}) }, signal);
 }
 
 /** The next window of hits, or the same query in another mode: `query` exactly as a result reported it. */
-export function searchLibraryPage(query: string, mode: LibrarySearchResult["mode"], cursor: number): Promise<LibrarySearchResponse> {
-  return post({ query, mode, cursor });
+export function searchLibraryPage(query: string, mode: LibrarySearchResult["mode"], cursor: number, source?: string | null): Promise<LibrarySearchResponse> {
+  return post({ query, mode, cursor, ...(source ? { source } : {}) });
 }
 
 export async function getLibraryStatus(): Promise<LibraryStatus | null> {

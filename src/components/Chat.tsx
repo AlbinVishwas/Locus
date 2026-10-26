@@ -6,7 +6,7 @@ import { createId } from "@/lib/id";
 import { getAppConfig } from "@/lib/configClient";
 import { toHistoryPayload } from "@/lib/history";
 import { searchLibrary } from "@/lib/libraryClient";
-import { getSearchScope, type SearchScope } from "@/lib/searchScope";
+import { getSearchScope, getSearchSource, type SearchScope } from "@/lib/searchScope";
 import { searchSession } from "@/lib/sessionSearchClient";
 import type { Conversation, DisplayMessage } from "@/lib/types";
 import {
@@ -230,7 +230,7 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
   const runLibrarySearch = useCallback(
     async (assistantId: string, text: string, signal: AbortSignal): Promise<boolean> => {
       try {
-        const libraryResult = await searchLibrary(text, signal);
+        const libraryResult = await searchLibrary(text, signal, getSearchSource());
         patchAssistantMessage(assistantId, (m) => ({ ...m, libraryResult }));
         return true;
       } catch (err) {

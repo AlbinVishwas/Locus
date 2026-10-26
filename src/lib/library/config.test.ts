@@ -63,4 +63,9 @@ describe("library config defaults", () => {
     expect(searchScope({})).toBe("session");
     expect(() => searchScope({ LOCUS_SEARCH_SCOPE: "everything" })).toThrow();
   });
+
+  it('"all" means all sources (the library)', () => {
+    expect(searchScope({ LOCUS_SEARCH_SCOPE: "all" })).toBe("library");
+    expect(searchScope({ LOCUS_SEARCH_SCOPE: " ALL " })).toBe("library");
+  });
 });

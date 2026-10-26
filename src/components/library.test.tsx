@@ -104,17 +104,26 @@ describe("LibraryBar", () => {
     ).toBe("");
   });
 
-  it("with the library on: the scope switch, starting at the configured default, and the status line", () => {
+  it("with the library on: the scope dropdown, starting at the configured default, and the status line", () => {
     const html = renderToStaticMarkup(
       <FeaturesProvider features={{ chatEnabled: false, libraryEnabled: true, defaultScope: "both" }}>
         <LibraryBar />
       </FeaturesProvider>
     );
-    expect(html).toContain('role="radiogroup" aria-label="Search in"');
-    expect(html).toMatch(/aria-checked="false"[^>]*>This session</);
-    expect(html).toMatch(/aria-checked="false"[^>]*>Library</);
-    expect(html).toMatch(/aria-checked="true"[^>]*>Both</);
+    expect(html).toContain('<select aria-label="Search in"');
+    expect(html).toMatch(/<option value="all"[^>]*>All sources</);
+    expect(html).toMatch(/<option value="session"[^>]*>My uploads</);
+    expect(html).toMatch(/<option value="both"[^>]*selected[^>]*>My uploads and all sources</);
     expect(html).toContain("Library: checking…");
+  });
+
+  it("starts on My uploads by default", () => {
+    const html = renderToStaticMarkup(
+      <FeaturesProvider features={{ chatEnabled: false, libraryEnabled: true }}>
+        <LibraryBar />
+      </FeaturesProvider>
+    );
+    expect(html).toMatch(/<option value="session"[^>]*selected/);
   });
 
   it("status line text: documents, pages, still indexing, not indexed, drive connected or not", () => {

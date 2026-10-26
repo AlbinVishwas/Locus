@@ -1,5 +1,6 @@
 import { getLibraryDb, libraryErrorStatus } from "@/lib/library/db";
 import { libraryCounts } from "@/lib/library/store";
+import { readWorker } from "@/lib/library/sources/view";
 import { requireAdmin } from "@/lib/session";
 import { usersEnabled } from "@/lib/users/mode";
 import type { LibraryStatus } from "@/lib/libraryClient";
@@ -25,12 +26,20 @@ export async function GET(req?: Request) {
   if (conn.status === "empty") return json({ connected: true, ...none });
   try {
     const c = libraryCounts(conn.db);
+    // Named sources (for the scope dropdown) and the indexer's storage numbers appear only once there is
+    // something to show, so a library with neither answers exactly as it always did.
+    const sources = conn.db.prepare("SELECT id, name, kind FROM sources WHERE name IS NOT NULL ORDER BY ordinal").all() as Array<{ id: string; name: string; kind: string }>;
+    const worker = readWorker(conn.db);
     return json({
       connected: true,
       documents: c.ready,
       pagesIndexed: c.pagesIndexed,
       indexing: c.jobsPending + c.jobsRunning,
       failed: c.failures,
+      ...(sources.length > 0 ? { sources } : {}),
+      ...(worker.usedBytes !== null
+        ? { storage: { usedBytes: worker.usedBytes, capBytes: worker.capBytes, freeBytes: worker.freeBytes, minFreeBytes: worker.minFreeBytes, limit: worker.limit } }
+        : {}),
     });
   } catch (err) {
     if (libraryErrorStatus(err) === "disconnected") return json({ connected: false, ...none });

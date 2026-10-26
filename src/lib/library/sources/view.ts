@@ -19,6 +19,8 @@ export interface SourceView {
   state: SourceState;
   managedBy: "app" | "env";
   status: { kind: StatusKind; text: string };
+  /** 0..1 while indexing, else null. */
+  progress: number | null;
   lastScanAt: string | null;
   documents: number;
   pagesIndexed: number;
@@ -121,6 +123,7 @@ export function describeSources(registry: RegistrySource[], library: Database.Da
     else if (pending > 0) status = { kind: "indexing", text: `Indexing… ${n(documents)} of ${n(documents + pending + failed)}` };
     else if (!scan) status = { kind: "waiting", text: "Waiting to scan" };
     else status = { kind: "ready", text: failed > 0 ? `Up to date · ${n(failed)} couldn't be read` : "Up to date" };
-    return { id: s.id, kind: s.kind, name: s.name, location: locationOf(s), state: s.state, managedBy: s.managedBy, status, lastScanAt, documents, pagesIndexed, failed };
+    const progress = status.kind === "indexing" ? documents / Math.max(documents + pending + failed, 1) : null;
+    return { id: s.id, kind: s.kind, name: s.name, location: locationOf(s), state: s.state, managedBy: s.managedBy, status, progress, lastScanAt, documents, pagesIndexed, failed };
   });
 }

@@ -21,7 +21,8 @@ export type SearchScope = "session" | "library" | "both";
 
 /** Which documents a search covers by default. Only meaningful with the library enabled. */
 export function searchScope(env: Env = process.env): SearchScope {
-  const raw = (env.LOCUS_SEARCH_SCOPE ?? "session").trim().toLowerCase();
+  let raw = (env.LOCUS_SEARCH_SCOPE ?? "session").trim().toLowerCase();
+  if (raw === "all") raw = "library"; // "All sources" in the dropdown
   if (raw !== "session" && raw !== "library" && raw !== "both") {
     throw new Error(`LOCUS_SEARCH_SCOPE must be "session", "library" or "both", got "${raw}"`);
   }
