@@ -4,43 +4,59 @@ Search a large library of PDFs (a folder, or rows in a database) beside each
 session's uploads. **Everything here is off unless configured.** With none
 of these settings, Locus behaves exactly as it always has.
 
-Status: indexing (Phase 1) and search in the app (Phase 2) are built.
-Phase 3 (a trial on the real library) is next. Design and decisions:
-[library-plan.md](library-plan.md).
+Status: indexing (Phase 1), search in the app (Phase 2), library storage on the
+laptop with a cap, and the Sources page with an always-on indexer (Phase B) are
+built; the trial on the real library waits for the real files. Design and
+decisions: [library-plan.md](library-plan.md) and [sources-plan.md](sources-plan.md).
+Running it with accounts, the admin and the Sources page: [sources.md](sources.md).
 
 ## The storage rule
 
-Nothing the library writes goes on the Mac's internal disk:
+*(This replaces the Phase 1 rule "nothing on the internal disk": the library may
+now live on the laptop's own disk, within limits. An external APFS drive still
+works exactly as before.)*
 
 - **Source PDFs are read in place**, never copied, never written (opened
-  read-only), and never served by the app.
-- **Everything the library writes** (index, OCR cache, temp files, job
-  state, logs, inventory reports) goes under `LOCUS_DATA_DIR`, a folder on
-  an **external drive formatted as APFS**.
-- **`index:library` and `library:inventory` refuse to start** when
-  `LOCUS_DATA_DIR` is unset, missing, on the internal disk (or anything in
-  the boot disk's APFS container), a disk image, a network drive, FAT32,
-  exFAT (unless overridden, see below), or read-only. The volume is
-  identified with `df`, `mount` and `diskutil`, never guessed from the
-  path. Each case has its own message.
-- **Locus never creates `LOCUS_DATA_DIR`.** After a drive is unplugged,
-  macOS can leave an empty `/Volumes/<name>` folder on the internal disk;
-  creating the data folder there would write to the boot volume. Create it
-  once yourself: `mkdir /Volumes/<drive>/locus-data`.
-- **A marker file** (`LOCUS_DATA_DIR/.locus-data-dir`) records the drive's
-  volume UUID. Before every write, the indexer checks the marker is still
-  there on the same device. If the drive is unplugged mid-run, it stops
-  safely, closes the index, and waits. When the same drive is back, it
-  checks the index (`PRAGMA quick_check`) and carries on.
-- **Free space** is checked before starting and every 30 s. Below
-  `LIBRARY_MIN_FREE_GB`, indexing pauses with a message, and resumes once
-  space is freed.
-- **Temp files** (rendered pages for OCR, database blobs being processed) go
-  in `LOCUS_DATA_DIR/library/tmp/`, and each is deleted as soon as its page
-  or file is done. The indexer also points `TMPDIR` there before doing
-  anything, so the tools it runs (poppler, tesseract) put their scratch files
-  on the external drive too.
-- **Session uploads are unchanged:** same storage, same behaviour.
+  read-only), and never served by the app. (Google Drive PDFs are the exception
+  by nature: each is downloaded to a temp file inside the library folder,
+  indexed, then deleted.)
+- **Everything the library writes** (index, OCR cache, source registry, temp
+  files, job state, logs, inventory reports) goes under `LOCUS_DATA_DIR`.
+  Unset, that's `data/locus-data` inside the project (created on first use).
+- **A cap and a reserve.** The library may write at most
+  `LOCUS_LIBRARY_MAX_GB` (default **100**) and never fills the disk below
+  `LOCUS_MIN_FREE_GB` free (default **20**). Usage is measured as real disk use
+  (allocated blocks, not file sizes) by a full walk every 30 s and a cheap
+  check before every index write; indexing stops a little (256 MB) before the
+  cap so the overshoot stays small. Free space is checked before every write
+  batch.
+- **When a limit is reached, indexing pauses and nothing is deleted** (only
+  temp files are removed, as their files stop). Search keeps working on what's
+  indexed. The message says which limit and the numbers
+  (`Paused: storage limit. The library uses 99.8 GB of its 100 GB limit...` or
+  `Paused: low disk space. 18.2 GB free; Locus keeps 20 GB in reserve...`), is
+  repeated every 5 minutes while paused, shown on the Sources page, in the
+  sidebar and in the activity log. Indexing **resumes by itself** once there's
+  room (a source removed, the cap raised, space freed).
+- **Still refused** for `LOCUS_DATA_DIR`: network filesystems (SQLite locking),
+  FAT32, exFAT (unless overridden, see below), read-only volumes, anything the
+  volume tools can't identify. A disk image is allowed with a warning.
+- **Cloud-sync folders** (iCloud Drive, OneDrive, Dropbox, Google Drive for
+  desktop, `~/Library/CloudStorage`, FUSE mounts) used as a source get a
+  warning: reading their files can download them to the Mac, outside the cap.
+  Online-only ("dataless") files are skipped, never downloaded.
+- **A path under `/Volumes` must already exist** (an unplugged drive leaves an
+  empty `/Volumes/<name>` folder on the internal disk; Locus won't create the
+  data folder there). Anywhere else Locus creates it.
+- **A marker file** (`LOCUS_DATA_DIR/.locus-data-dir`) records the volume's UUID.
+  Before every write the indexer checks the marker is still there on the same
+  device. If an external drive is unplugged mid-run, it stops safely, closes the
+  index, and waits; when the same drive is back, it checks the index
+  (`PRAGMA quick_check`) and carries on.
+- **Temp files** (rendered pages for OCR, database and Drive blobs being
+  processed) go in `LOCUS_DATA_DIR/library/tmp/` and each is deleted as soon as
+  its page or file is done. The indexer also points `TMPDIR` there.
+- **Session uploads are unchanged** and keep their separate 5 GB cap.
 
 ### Why exFAT is refused by default
 
@@ -54,7 +70,7 @@ must use an exFAT drive, `LOCUS_DATA_DIR_ALLOW_EXFAT=true` allows it, with
 a warning on every run. FAT32 is refused outright: it can't hold a file
 over 4 GB, and the index will be far bigger than that.
 
-### Showing that nothing is written to the internal disk
+### Showing where the library writes (relevant for an external drive)
 
 - **Automated:** `src/lib/library/resume.test.ts` runs a real indexer
   process with `TMPDIR` and `HOME` pointed at empty canary folders. They
@@ -127,7 +143,7 @@ indexer is the one writer.
 
 ```bash
 # .env.local (never committed)
-LOCUS_DATA_DIR=/Volumes/LocusSSD/locus-data     # an existing folder on an external APFS drive
+# LOCUS_DATA_DIR=/Volumes/LocusSSD/locus-data  # optional: an existing folder on an external APFS drive (default: data/locus-data on this Mac)
 LOCUS_LIBRARY_DIR=/Volumes/Archive/Tenders      # the PDFs, read in place
 
 npm run library:inventory     # what's there, and what indexing it would take (no indexing)
@@ -141,13 +157,14 @@ npm run verify:library        # brute-force check of the index
 | Command | What it does |
 | --- | --- |
 | `npm run library:inventory [-- --sample 300] [--fresh]` | Scans `LOCUS_LIBRARY_DIR` with no indexing and no OCR. Writes a report (Markdown + JSON) to `LOCUS_DATA_DIR/library/inventory/`: files and bytes by type, PDF count and size distribution (median, p90, largest), what was skipped and why, plus a ~300-PDF random sample (pages per PDF, share of pages needing OCR, ~20 pages OCR'd once to time it, nothing kept). From those, a projection: total pages, indexing time, index size and the free space needed on the drive. It reports how long the scan took, and is safe to stop and rerun (it continues). `--fresh` starts over. |
+| `npm run library:worker` | The indexer as a service: watches the sources added on the Sources page and indexes them (add, pause, resume, rescan, remove take effect within seconds). `npm run share` starts it for you. Takes `--poll <ms>`. |
 | `npm run index:library` | Indexes every configured source, then exits. Keeps the Mac awake, runs at lowered priority, and prints progress (files and pages done, pages/s, ETA, failures, free space, memory). Ctrl+C stops it cleanly; rerunning continues where it stopped. |
 | `npm run index:library -- --watch` | Keeps running and rescans every `LIBRARY_RESCAN_MINUTES`. |
 | `npm run index:library -- --retry-failed` | Also retries files that failed before. Normally a failure is only retried once the file changes. |
 | `npm run index:library -- --sample N [--seed S]` | Indexes a uniform random N of the PDFs only: the trial. |
 | `npm run index:library -- --status` | Counts: documents, pages, queued, failures by kind. |
 | `npm run verify:library` | Picks random documents and checks that the index's matches equal a plain substring scan of their text. Exits 1 on any difference. `LIBRARY_INDEX_FILE=<file>` checks a specific index file instead. |
-| `npm run e2e:library:setup -- <dataDir>` then `npm run e2e:library` | Browser end-to-end with the library on: builds a 3-PDF scratch library, then checks the scope switch, status line, library-only / Both searches, paging, the short-query and punctuation messages, disconnecting and reconnecting the drive, and that no absolute path is shown. `E2E_CHAT=true` runs the chat-on variant. Usage at the top of `scripts/e2e-library.mjs`. |
+| `npm run e2e:library:setup -- <dataDir>` then `npm run e2e:library` | Browser end-to-end with the library on: builds a 3-PDF scratch library, then checks the scope dropdown, status line, library-only / Both searches, paging, the short-query and punctuation messages, disconnecting and reconnecting the drive, and that no absolute path is shown. `E2E_CHAT=true` runs the chat-on variant. Usage at the top of `scripts/e2e-library.mjs`. |
 
 ## What gets indexed, and what's skipped
 
@@ -205,8 +222,11 @@ All are optional; none does anything until set.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LOCUS_LIBRARY_ENABLED` | `false` | Library search in the app (scope switch, status line, library results). |
-| `LOCUS_SEARCH_SCOPE` | `session` | Default scope: `session`, `library` or `both`. |
-| `LOCUS_DATA_DIR` | — | Where the library writes everything. An existing folder on an external APFS drive. |
+| `LOCUS_SEARCH_SCOPE` | `session` | Default scope: `session`, `all` (same as `library`) or `both`. |
+| `LOCUS_DATA_DIR` | `data/locus-data` | Where the library writes everything. The laptop's disk by default; an existing folder on an external APFS drive also works. |
+| `LOCUS_LIBRARY_MAX_GB` | `100` | Cap on everything the library writes. |
+| `LOCUS_MIN_FREE_GB` | `20` | Free space the disk always keeps (`LIBRARY_MIN_FREE_GB` is the old name and still works). |
+| `LOCUS_ALLOWED_ROOTS` | `/Volumes` | Where a source added on the Sources page may be. See [sources.md](sources.md). |
 | `LOCUS_LIBRARY_DIR` | — | Folder source. |
 | `LIBRARY_DB_URL`, `LIBRARY_DB_QUERY` | — | Database source (below). |
 | `LIBRARY_DB_BATCH_SIZE` | `500` | Rows fetched per batch. |
@@ -222,7 +242,6 @@ All are optional; none does anything until set.
 | `PAGE_TIMEOUT_MS` | `120000` | Per tool call. |
 | `LIBRARY_FILE_TIMEOUT_MS` | `1800000` | Per file. |
 | `LIBRARY_SETTLE_SECONDS` | `120` | A file modified more recently than this waits. |
-| `LIBRARY_MIN_FREE_GB` | `20` | Pause below this much free space on the drive. |
 | `LIBRARY_RESCAN_MINUTES` | `60` | With `--watch`. |
 | `LIBRARY_CROSS_DEVICE` | `false` | Descend into other mounted devices inside the folder. |
 | `LIBRARY_LABELS_MAX_BYTES` | `20971520` | Read printed page labels only for files up to this size. |

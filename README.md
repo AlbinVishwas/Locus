@@ -62,6 +62,12 @@ sharing the app with a small group over a tunnel.
 Login attempts are rate-limited (5 per 5 minutes per caller) and the passcode
 comparison is constant-time.
 
+**Named accounts (optional).** With `LOCUS_USERS_ENABLED=true` the shared
+passcode is replaced by accounts: people create their own with a sign-up code
+you give them, **each person can search only the files they upload**, and an
+administrator (`LOCUS_ADMIN_PASSCODE`) gets Users, Activity and Sources pages. Every
+search is logged for the administrator. See [docs/sources.md](docs/sources.md).
+
 ## Document search
 
 Full-text search over PDFs: type any text, get every document and page that
@@ -137,17 +143,25 @@ with a message naming how much is used.
 | `MAX_UPLOAD_FILE_BYTES` | `104857600` (100 MB) | Largest single file accepted. |
 | `MAX_FILES_PER_CONVERSATION` | `20` | Per-conversation cap, independent of the storage cap. |
 
-## Document library (in progress)
+## Document library and the Sources page
 
-Index a large PDF library -- a folder or a database -- onto an external
-drive, for search beside session uploads. Off unless configured; nothing
-changes without its settings. Indexing (`npm run library:inventory`,
-`npm run index:library`, `npm run verify:library`) and search in the app
-(`LOCUS_LIBRARY_ENABLED=true`: a This session / Library / Both switch, a
-status line, paged library results) are built. Everything the library writes goes on the
-external drive at `LOCUS_DATA_DIR` -- it refuses to run against the
-internal disk. Setup, settings, database config and the storage rule:
-[docs/library.md](docs/library.md). Design: [docs/library-plan.md](docs/library-plan.md).
+Index a large PDF library -- folders, a database, a public Google Drive
+folder -- for search beside session uploads. Off unless configured; nothing
+changes without its settings. With `LOCUS_LIBRARY_ENABLED=true` the app gets a
+**Search in** dropdown (All sources / one source / My uploads), a status line,
+paged results that name each hit's source, and -- for the administrator -- a
+**Sources page** to add, test, pause, resume, rescan and remove sources, while
+an indexer worker (started by `npm run share`, or `npm run library:worker`)
+does the work. The library lives on this Mac's disk by default under a
+**100 GB cap that never fills the disk below 20 GB free**; indexing pauses (and
+deletes nothing) when either is reached. Command-line indexing
+(`npm run library:inventory`, `index:library`, `verify:library`) still works.
+
+- Using it: [docs/sources.md](docs/sources.md) (accounts, admin, Sources page,
+  allowed roots, secrets, the activity log, settings)
+- Setup, storage rule, commands, database sources: [docs/library.md](docs/library.md)
+- Scale: [docs/sources-scale.md](docs/sources-scale.md)
+- Design: [docs/library-plan.md](docs/library-plan.md), [docs/sources-plan.md](docs/sources-plan.md)
 
 `npm run share` now switches its tunnel to HTTP/2 on its own when a
 network blocks QUIC/UDP (see [docs/sharing.md](docs/sharing.md)).

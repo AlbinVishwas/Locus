@@ -23,7 +23,8 @@
     "e2e:library:setup": "TSX_DISABLE_CACHE=1 node --import tsx scripts/e2e-library-setup.ts",
     "library:worker": "TSX_DISABLE_CACHE=1 node --import tsx scripts/library-worker.ts",
     "e2e:sources": "node scripts/e2e-sources.mjs",
-    "screenshots:sources": "node scripts/screenshots-sources.mjs"
+    "screenshots:sources": "node scripts/screenshots-sources.mjs",
+    "bench:library": "TSX_DISABLE_CACHE=1 node --import tsx scripts/bench-library.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

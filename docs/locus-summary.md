@@ -71,6 +71,48 @@ Full details: [docs/sharing.md](sharing.md).
 - **385 automated tests pass**, along with type-checking, linting, and a
   production build.
 
+## New: accounts, a Sources page, and a library that lives on the laptop
+
+All of this is **off until you turn it on** in `.env.local`; with nothing
+set, Locus behaves exactly as described above. Full guide:
+[docs/sources.md](sources.md).
+
+- **Accounts.** With `LOCUS_USERS_ENABLED=true`, people sign in with a
+  username and passcode instead of the one shared passcode. Only people you
+  give the **sign-up code** to can create an account. **Each person can search
+  only what they uploaded themselves** — checked in the tests and the browser
+  run: asking for another person's session gets "No such session".
+- **You, the administrator,** sign in as `admin` with `LOCUS_ADMIN_PASSCODE`
+  (it works through the public link too). Only you see the **Users**,
+  **Activity** and **Sources** pages; the server refuses everyone else, it
+  isn't just hidden.
+- **Activity.** Every search (with the words searched and how many pages and
+  documents it found, never the document text), sign-in, failed attempt,
+  upload, source change and indexing problem goes into a database you can open
+  any time on the Activity page, filter, and download as a spreadsheet. A strip
+  at the top counts what went wrong in the last 24 hours. The sign-in page tells
+  people searches are logged. Kept for a year.
+- **Sources.** You can point Locus at a **folder** (on a connected drive), a
+  **database** (PostgreSQL, MySQL or SQLite) or a **public Google Drive
+  folder**, press Test to check it, and add it; a background worker indexes it.
+  You can pause, resume, rescan or remove each source (removing deletes only
+  Locus's index of it, never the original files). Database passwords are
+  encrypted. Folders can only be inside allowed locations (`/Volumes` by
+  default), so a stolen admin passcode can't be used to read the rest of the
+  Mac.
+- **Where the library is stored.** On this laptop's disk, **at most 100 GB**,
+  and **never below 20 GB free**. If a limit is reached, indexing pauses with a
+  clear message, deletes nothing, and carries on by itself when there's room;
+  search keeps working. (This laptop had about 96 GB free, so the 20 GB
+  reserve is the limit that applies first: about 76 GB.) Uploads keep their own
+  5 GB limit; the sidebar shows both.
+- **Search.** A dropdown picks **All sources**, one source, or **My uploads**;
+  each hit shows which source it came from.
+- **What isn't done yet:** the real inventory and the 1,000-document trial wait
+  for the real files; real PostgreSQL/MySQL servers haven't been connected (SQL
+  generation and the SQLite path are tested); private Google Drive folders
+  aren't supported. See [docs/sources.md](sources.md#known-limits).
+
 ## Storage and retention (the numbers, and why)
 
 | Setting | Default | Reasoning |
@@ -129,8 +171,10 @@ applies once, at upload/index time.
    passcode gets anyone in — simple, and fine for a small trusted group.
    Real accounts would mean separate logins, and could support things
    like "whose upload is this" later.
-   **My recommendation: keep the shared passcode** unless more than a
-   handful of people need access, or you want to know who did what.
+   **Update:** real accounts now exist as an option (see above), switched on
+   with `LOCUS_USERS_ENABLED=true`; the shared passcode still works when it's off.
+   **My recommendation:** use accounts once more than a handful of people
+   need access, or you want to know who did what.
 
 4. **Staying on this laptop, or moving to the cloud later.** Today,
    everything — the model, the files, the search index — stays on this

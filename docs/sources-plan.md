@@ -978,3 +978,47 @@ searches the library); self-registration **gated by a sign-up code** (only peopl
 you invite can register); search text stored; allowed roots = `/Volumes` only
 (folders are added with `LOCUS_ALLOWED_ROOTS`); admin sign-in works through the
 tunnel (`LOCUS_ADMIN_LOCAL_ONLY` optional). Phase B is building these.
+
+---
+
+## Build notes (what changed while building Phase B)
+
+Where the built thing differs from the plan above, and why. Everything not
+listed here was built as written.
+
+1. **Admin = an account in users mode, not a separate sign-in.** §4 and §8.1
+   sketched `/admin` on top of the one-passcode app. After the users-mode
+   decisions (named accounts, per-user uploads, self-registration behind a
+   sign-up code), "admin" became the built-in account `admin`, signing in on
+   the normal page with `LOCUS_ADMIN_PASSCODE`. Consequence: **the admin area
+   needs `LOCUS_USERS_ENABLED=true`**. The sidebar has no "Admin sign-in"
+   link; the Sources / Users / Activity links show for the admin only, and the
+   proxy plus every route check the role on the server.
+2. **Library routes are admin-only in users mode.** Normal users search only
+   their own uploads: `/api/library/*` and the legacy `/api/search` answer 403
+   to them, and the layout doesn't even send them the library UI.
+3. **Folder / database / Drive Test is bounded.** Folder: counts up to 5,000
+   PDFs or 8 s and says "at least N". Database and Drive: 5 sample entries. All
+   use the indexer's own source builders, so Test and Add agree.
+4. **SQLite files are typed in** (the folder browser lists folders only).
+5. **The "N files not indexed" link is plain text** on the row for now, not a
+   clickable list; the per-file reasons are in `library/logs/failures.jsonl`.
+6. **No Edit for a source's folder/password** yet (remove and re-add; rename is
+   in the API).
+7. **`.env` sources:** shown on the Sources page as "managed in .env" and can be
+   paused; a database source configured in `.env` is run by
+   `npm run index:library` only.
+8. **Indexer events reach the activity log** (`indexer_paused`,
+   `indexer_resumed`, `indexer_error`) only in users mode, via an `onEvent`
+   hook the worker passes to the pipeline.
+9. **Folder-browser start:** a remembered path that is no longer allowed falls
+   back to the list of allowed locations.
+10. **Scope dropdown extras:** besides *All sources*, each source and *My
+    uploads*, it keeps *My uploads and all sources* (the old "Both") so
+    `LOCUS_SEARCH_SCOPE=both` still has somewhere to land.
+11. **Allowed roots:** default `/Volumes` only, as agreed; `LOCUS_ALLOWED_ROOTS`
+    adds more and may never be `/`.
+
+### Scale benchmark
+
+Results: [sources-scale.md](sources-scale.md).
