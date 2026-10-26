@@ -71,6 +71,20 @@ export function userSourcesEnabled(env: Env = process.env): boolean {
   return usersEnabled(env) && flag(env.LOCUS_USER_SOURCES);
 }
 
+/**
+ * Whether ordinary accounts may also add a database as a source (on top of folders): LOCUS_USER_DATABASES=true,
+ * and only with LOCUS_USER_SOURCES on. A testing switch: the account supplies the host to connect to, so leave
+ * it off wherever people shouldn't be able to point this computer at other machines.
+ */
+export function userDatabasesEnabled(env: Env = process.env): boolean {
+  return userSourcesEnabled(env) && flag(env.LOCUS_USER_DATABASES);
+}
+
+/** The kinds of source an ordinary account may add. */
+export function userSourceKinds(env: Env = process.env): Array<"folder" | "database"> {
+  return userDatabasesEnabled(env) ? ["folder", "database"] : ["folder"];
+}
+
 /** How many folders one ordinary account may add. */
 export function userSourcesMax(env: Env = process.env): number {
   const raw = env.LOCUS_USER_SOURCES_MAX;

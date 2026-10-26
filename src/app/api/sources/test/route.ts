@@ -4,6 +4,7 @@ import { testSource } from "@/lib/library/sources/testSource";
 import { logActivity } from "@/lib/records/activity";
 import { getRecordsDb } from "@/lib/records/db";
 import { activityFor, requireSourcesAccess } from "@/lib/session";
+import { userSourceKinds } from "@/lib/users/mode";
 
 export const runtime = "nodejs";
 
@@ -18,8 +19,8 @@ export async function POST(req: Request) {
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
   }
-  if (gate.user?.role !== "admin" && (body as { kind?: unknown } | null)?.kind !== "folder") {
-    return Response.json({ error: "You can add folders only." }, { status: 403 });
+  if (gate.user?.role !== "admin" && !(userSourceKinds() as unknown[]).includes((body as { kind?: unknown } | null)?.kind)) {
+    return Response.json({ error: userSourceKinds().length > 1 ? "You can add folders and databases only." : "You can add folders only." }, { status: 403 });
   }
   const result = await testSource(body, appLibraryConfig());
   logActivity(getRecordsDb(), activityFor(req, gate.user, { kind: "source_tested", status: result.ok ? "ok" : "error", message: result.ok ? undefined : result.message.slice(0, 200), details: { kind: (body as { kind?: unknown })?.kind } }));

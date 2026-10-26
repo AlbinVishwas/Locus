@@ -55,6 +55,7 @@ export default function SourcesView() {
   };
 
   const mine = data?.scope === "mine";
+  const withDb = Boolean(data?.kinds?.includes("database"));
   const worker = data?.worker;
   const used = worker?.usedBytes ?? null;
   const cap = worker?.capBytes ?? data?.capBytes ?? null;
@@ -89,7 +90,7 @@ export default function SourcesView() {
           disabled={!data}
           className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {mine ? "+ Add folder" : "+ Add source"}
+          {mine && !withDb ? "+ Add folder" : "+ Add source"}
         </button>
       </div>
 
@@ -117,9 +118,9 @@ export default function SourcesView() {
       {data === null && !error && <p className="text-[13px] text-secondary">Loading…</p>}
       {data && data.sources.length === 0 && (
         <div className="rounded-xl border border-line p-8 text-center">
-          <p className="text-[13px] text-secondary">{mine ? "No folders yet. Add a folder of PDFs on this computer or a connected drive to search it." : "No sources yet. Add a folder, a database, or a Google Drive folder to search it."}</p>
+          <p className="text-[13px] text-secondary">{mine ? (withDb ? "Nothing added yet. Add a folder of PDFs on this computer, or a database that lists them, to search it." : "No folders yet. Add a folder of PDFs on this computer or a connected drive to search it.") : "No sources yet. Add a folder, a database, or a Google Drive folder to search it."}</p>
           <button type="button" onClick={() => setAdding(true)} className="mt-3 cursor-pointer rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink">
-            {mine ? "+ Add folder" : "+ Add source"}
+            {mine && !withDb ? "+ Add folder" : "+ Add source"}
           </button>
         </div>
       )}
@@ -134,7 +135,7 @@ export default function SourcesView() {
       {adding && data && (
         <AddSourceDialog
           info={data}
-          kinds={mine ? ["folder"] : undefined}
+          kinds={mine ? data.kinds ?? ["folder"] : undefined}
           onClose={() => setAdding(false)}
           onAdded={() => {
             setAdding(false);

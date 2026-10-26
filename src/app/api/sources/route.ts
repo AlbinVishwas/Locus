@@ -8,7 +8,7 @@ import { logActivity } from "@/lib/records/activity";
 import { getRecordsDb } from "@/lib/records/db";
 import { listUsers } from "@/lib/records/users";
 import { activityFor, requireSourcesAccess } from "@/lib/session";
-import { userSourcesMax } from "@/lib/users/mode";
+import { userSourceKinds, userSourcesMax } from "@/lib/users/mode";
 
 export const runtime = "nodejs";
 
@@ -65,8 +65,9 @@ export async function GET(req: Request) {
         capBytes: isAdmin ? config.maxBytes : 0,
         minFreeBytes: isAdmin ? config.minFreeBytes : 0,
         driveConfigured: isAdmin && Boolean(process.env.GOOGLE_API_KEY?.trim()),
-        secretsConfigured: isAdmin && secretsConfigured(),
+        secretsConfigured: (isAdmin || userSourceKinds().includes("database")) && secretsConfigured(),
         maxSources: isAdmin ? null : userSourcesMax(),
+        kinds: isAdmin ? ["folder", "database", "drive"] : userSourceKinds(),
       },
       { headers: noStore }
     );
@@ -89,8 +90,8 @@ export async function POST(req: Request) {
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
   }
-  if (!isAdmin && (body as { kind?: unknown } | null)?.kind !== "folder") {
-    return Response.json({ error: "You can add folders only." }, { status: 403 });
+  if (!isAdmin && !(userSourceKinds() as unknown[]).includes((body as { kind?: unknown } | null)?.kind)) {
+    return Response.json({ error: userSourceKinds().length > 1 ? "You can add folders and databases only." : "You can add folders only." }, { status: 403 });
   }
   try {
     const result = withRegistry((registry, config) => {

@@ -11,6 +11,8 @@ export interface SourcesResponse {
   scope: "all" | "mine";
   /** How many folders an ordinary account may add (null for the administrator). */
   maxSources: number | null;
+  /** The kinds of source this account may add. */
+  kinds?: Array<"folder" | "database" | "drive">;
   worker: WorkerView;
   connected: boolean;
   allowedRoots: string[];
