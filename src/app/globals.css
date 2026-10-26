@@ -66,8 +66,11 @@ html {
    Textareas are excluded: a typing space that's focused for the entire
    time someone is composing a message would otherwise wear that ring
    constantly, reading as a stray box around the text rather than a
-   focus cue -- the composer's own border already shows where it is. */
-:focus-visible:not(textarea) {
+   focus cue -- the composer's own border already shows where it is.
+
+   Anything marked data-no-focus-ring is excluded too: the scope pill's select
+   sits inside a chip whose own border already lights up on focus. */
+:focus-visible:not(textarea):not([data-no-focus-ring]) {
   outline: 2px solid var(--accent-cream);
   outline-offset: 2px;
   border-radius: 4px;

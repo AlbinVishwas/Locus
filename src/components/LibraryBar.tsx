@@ -96,6 +96,7 @@ function ScopeSelect() {
       <FolderIcon />
       <select
         aria-label="Search in"
+        data-no-focus-ring
         value={value}
         onChange={(e) => choose(e.target.value)}
         className="max-w-[60vw] cursor-pointer appearance-none truncate bg-transparent pr-4 [field-sizing:content] text-[13px] text-inherit outline-none"
