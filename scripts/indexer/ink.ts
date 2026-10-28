@@ -19,15 +19,41 @@ const LINE_INCHES = 0.6;
 /** Word boxes are grown by this many inches so antialiased edges and slightly off boxes don't count as outside ink. */
 const MARGIN_INCHES = 0.03;
 
-export function inkOutsideText(pgm: Pgm, page: PageBoxes, dpi = INK_DPI): number {
+/**
+ * The share of the page that is dark lettering outside every word box of the text layer (and not a ruled line).
+ *
+ * `stopBelow`: a caller that only compares the answer with a threshold can pass it. Dark pixels outside the word boxes
+ * are counted first; if even before the ruled lines are taken out that share is under `stopBelow`, the lines can only
+ * lower it further, so the page is clean either way and that number is returned without the (slower) line passes. The
+ * value is then an upper bound that is still under the threshold, so every decision made from it is the same. Without
+ * `stopBelow` the result is exact.
+ */
+export function inkOutsideText(pgm: Pgm, page: PageBoxes, dpi = INK_DPI, stopBelow?: number): number {
   const { width, height, pixels } = pgm;
   if (width === 0 || height === 0) return 0;
   const dark = new Uint8Array(width * height);
   for (let i = 0; i < dark.length; i++) dark[i] = pixels[i] < 200 ? 1 : 0;
 
-  // Remove long horizontal and vertical runs.
-  const minRun = Math.round(LINE_INCHES * dpi);
+  // Everything inside the text layer's word boxes (slightly grown) is accounted for.
   const skip = new Uint8Array(width * height);
+  const sx = width / page.width;
+  const sy = height / page.height;
+  const margin = Math.ceil(MARGIN_INCHES * dpi);
+  for (const w of page.words) {
+    const x0 = Math.max(0, Math.floor(w.xMin * sx) - margin);
+    const x1 = Math.min(width, Math.ceil(w.xMax * sx) + margin);
+    const y0 = Math.max(0, Math.floor(w.yMin * sy) - margin);
+    const y1 = Math.min(height, Math.ceil(w.yMax * sy) + margin);
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) skip[y * width + x] = 1;
+  }
+  if (stopBelow !== undefined) {
+    let outsideBoxes = 0;
+    for (let i = 0; i < dark.length; i++) if (dark[i] && !skip[i]) outsideBoxes++;
+    if (outsideBoxes / dark.length < stopBelow) return outsideBoxes / dark.length;
+  }
+
+  // Remove long horizontal and vertical runs: ruled lines, underlines, filled bars.
+  const minRun = Math.round(LINE_INCHES * dpi);
   for (let y = 0; y < height; y++) {
     let x = 0;
     while (x < width) {
@@ -53,18 +79,6 @@ export function inkOutsideText(pgm: Pgm, page: PageBoxes, dpi = INK_DPI): number
       if (end - y >= minRun) for (let k = y; k < end; k++) skip[k * width + x] = 1;
       y = end;
     }
-  }
-
-  // Remove everything inside the text layer's word boxes (slightly grown).
-  const sx = width / page.width;
-  const sy = height / page.height;
-  const margin = Math.ceil(MARGIN_INCHES * dpi);
-  for (const w of page.words) {
-    const x0 = Math.max(0, Math.floor(w.xMin * sx) - margin);
-    const x1 = Math.min(width, Math.ceil(w.xMax * sx) + margin);
-    const y0 = Math.max(0, Math.floor(w.yMin * sy) - margin);
-    const y1 = Math.min(height, Math.ceil(w.yMax * sy) + margin);
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) skip[y * width + x] = 1;
   }
 
   let outside = 0;

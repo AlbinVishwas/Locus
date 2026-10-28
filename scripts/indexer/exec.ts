@@ -25,7 +25,8 @@ export function run(
 ): Promise<Buffer> {
   // A positive niceness starts the tool at a lower priority (via nice(1)), so a run of OCR
   // on every core still leaves the laptop's other programs, and this server, responsive.
-  const lowered = options.niceness !== undefined && options.niceness > 0;
+  // (Windows has no nice(1); there the tools simply run at normal priority.)
+  const lowered = options.niceness !== undefined && options.niceness > 0 && process.platform !== "win32";
   return new Promise((resolve, reject) => {
     execFile(
       lowered ? "nice" : command,

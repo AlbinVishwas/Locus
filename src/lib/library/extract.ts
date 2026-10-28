@@ -1,11 +1,11 @@
-import { inkFraction, parsePgm, planPage, type OcrReason } from "../../../scripts/indexer/classify";
+import { DEFAULT_UNCOVERED_INK_MAX, inkFraction, parsePgm, planPage, type OcrReason } from "../../../scripts/indexer/classify";
 import { loadConfig, type IndexerConfig } from "../../../scripts/indexer/config";
 import { runText, ToolError } from "../../../scripts/indexer/exec";
 import { ocrPage, sourceAfterOcr, type ExtractContext } from "../../../scripts/indexer/extract";
 import { readPageLabels } from "../../../scripts/indexer/labels";
 import type { OcrCache } from "../../../scripts/indexer/ocrCache";
 import { brokenWordJoins, INK_DPI, inkOutsideText } from "../../../scripts/indexer/ink";
-import { imageCoverage, renderGray, textBoxes, textLayerPage, type PageBoxes } from "../../../scripts/indexer/pdf";
+import { imageCoverage, renderGray, renderGrayPages, textBoxes, textLayerPage, type PageBoxes } from "../../../scripts/indexer/pdf";
 import type { ExtractedPage } from "../../../scripts/indexer/store";
 import { MAX_PAGE_NO } from "./schema";
 import { SourceFileError } from "./sources/types";
@@ -194,6 +194,16 @@ export async function* extractPages(
       );
     }
 
+    // The ink check needs a small render of each page: one pdftoppm call for the whole window, not one process per page.
+    let inkRenders: Map<number, Buffer> | null = null;
+    if (wantSmart && !smartUnchecked) {
+      try {
+        inkRenders = await o.limit(() => renderGrayPages(file, first, last, INK_DPI, o.tempDir, o.pageTimeoutMs));
+      } catch {
+        inkRenders = null; // each page then renders for itself below
+      }
+    }
+
     const pages = await Promise.all(
       layers.map(async (layerText, i): Promise<ExtractedPage> => {
         const pageNo = first + i;
@@ -210,8 +220,8 @@ export async function* extractPages(
         if (!layerErrors[i] && planOptions.ocrMode === "smart" && !plan.ocrReason && boxes?.[idx]) {
           // The layer looks fine so far; check the page for lettering it doesn't account for.
           try {
-            const pgm = parsePgm(await o.limit(() => renderGray(file, pageNo, INK_DPI, o.pageTimeoutMs)));
-            plan = planPage(layerText, coverage[idx], { ...planOptions, uncoveredInk: inkOutsideText(pgm, boxes[idx]) });
+            const rendered = inkRenders?.get(pageNo) ?? (await o.limit(() => renderGray(file, pageNo, INK_DPI, o.pageTimeoutMs)));
+            plan = planPage(layerText, coverage[idx], { ...planOptions, uncoveredInk: inkOutsideText(parsePgm(rendered), boxes[idx], INK_DPI, DEFAULT_UNCOVERED_INK_MAX) });
           } catch {
             plan = { checkBlank: false, ocrReason: "all-pages" as OcrReason };
           }

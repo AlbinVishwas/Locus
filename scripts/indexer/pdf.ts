@@ -134,6 +134,26 @@ export async function renderGray(
   return run("pdftoppm", ["-r", String(dpi), "-gray", "-f", p, "-l", p, file], { timeoutMs });
 }
 
+/**
+ * Greyscale renders of pages first..last in ONE pdftoppm call (one process start instead of one per page), as binary PGM
+ * images by page number. The files are written under `outDir` and deleted before this returns.
+ */
+export async function renderGrayPages(file: string, first: number, last: number, dpi: number, outDir: string, timeoutMs: number): Promise<Map<number, Buffer>> {
+  const base = path.join(outDir, `ink-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  const out = new Map<number, Buffer>();
+  const prefix = path.basename(base);
+  try {
+    await run("pdftoppm", ["-r", String(dpi), "-gray", "-f", String(first), "-l", String(last), file, base], { timeoutMs });
+    for (const name of await fs.readdir(outDir)) {
+      const m = name.startsWith(`${prefix}-`) ? name.match(/-(\d+)\.pgm$/) : null;
+      if (m) out.set(Number(m[1]), await fs.readFile(path.join(outDir, name)));
+    }
+    return out;
+  } finally {
+    for (const name of await fs.readdir(outDir).catch(() => [] as string[])) if (name.startsWith(`${prefix}-`)) await fs.rm(path.join(outDir, name), { force: true });
+  }
+}
+
 /** Renders one page to `<outBase>.png` for OCR and returns that path. */
 export async function renderPng(
   file: string,
