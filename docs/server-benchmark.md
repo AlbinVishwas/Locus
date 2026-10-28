@@ -21,8 +21,8 @@ a unique word on one known page of each file so search can be checked end to end
   milliseconds over HTTP (3.3 ms median, 4.2 ms 95th percentile through the real app, measured by `scripts/e2e-server.mjs`).
 - "Smart" OCR costs time, not accuracy of search: on this clean set it OCRs the same 74 pages as `auto` (the scanned ones), but it also
   checks every typed page for a broken text layer (letter-spaced words, lettering drawn outside the layer), which costs a small render per
-  page. It takes 2.3x as long to index as `auto` here. It was 3.9x before the check was made cheaper (one `pdftoppm` call per window of pages
-  instead of per page, and skipping the ruled-line passes when a page is clearly clean): 47 s to 27 s on this set. Set
+  page. It takes 2.3x as long to index as `auto` here. It was 3.2x before the check was made cheaper (47 s against 15 s for `auto`, in the first measurement) (one `pdftoppm` call per window of pages
+  instead of per page, and skipping the ruled-line passes when a page is clearly clean): 47 s down to 27 s on this set. Set
   `LIBRARY_OCR_PAGES=auto` to trade the check for speed.
 - **Time to first searchable file is seconds**, not "after the index is built": pages are committed in chunks of 25 as they are read, and the
   Server page shows files done, pages read and an estimate of the time left while you search what is done.
