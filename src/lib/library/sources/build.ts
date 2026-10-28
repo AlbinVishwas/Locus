@@ -1,6 +1,15 @@
+import path from "node:path";
 import type Database from "better-sqlite3";
+import { withCode } from "../../errors/catalog";
+import { createConnector } from "../../server/connector";
+import { serverFingerprint } from "../../server/config";
+import { ConnectorSource } from "../../server/connectorSource";
+import { diskInfo } from "../../server/disk";
+import { measureServer, planSpace, readPreflight, spaceMessage, writePreflight } from "../../server/preflight";
+import { ConnectorError } from "../../server/types";
 import { allowedList, resolveAllowed } from "../allowedRoots";
-import type { LibraryConfig } from "../config";
+import { libraryPaths, type LibraryConfig } from "../config";
+import { UsageMeter } from "../storage/usage";
 import type { ServedSource } from "../pipeline";
 import { buildQuery, buildUrl, FormError } from "./db/form";
 import { DatabaseSource } from "./database";
@@ -26,7 +35,7 @@ export interface BuildContext {
   env?: Record<string, string | undefined>;
 }
 
-const LIBRARY_KIND = { folder: "folder", database: "database", drive: "drive" } as const;
+const LIBRARY_KIND = { folder: "folder", database: "database", drive: "drive", server: "server" } as const;
 
 function served(entry: RegistrySource, source: LibrarySource | null, error: string | null): ServedSource {
   return {
@@ -50,6 +59,8 @@ export function buildServedSource(entry: RegistrySource, ctx: BuildContext): Ser
         return buildDatabase(entry, ctx);
       case "drive":
         return buildDrive(entry, ctx);
+      case "server":
+        return buildServer(entry, ctx);
     }
   } catch (err) {
     return served(entry, null, err instanceof Error ? err.message : String(err));
@@ -130,4 +141,41 @@ function buildDrive(entry: RegistrySource, ctx: BuildContext): ServedSource {
   const api = new DriveApi({ apiKey: env.GOOGLE_API_KEY, base: driveApiBase(env) });
   const source = new GoogleDriveSource({ id: entry.id, name: entry.name, folderId: cfg.folderId, api, maxFileBytes: ctx.config.maxFileBytes });
   return served(entry, source, null);
+}
+
+/**
+ * The company storage server from LOCUS_SERVER_*. The connection comes from the environment (never from the
+ * registry, which holds no secrets). Before the first index of a server -- and again while the last check said
+ * it wouldn't fit -- the scan starts with a sizes-only pass and refuses to begin if the index couldn't fit on the
+ * disk (LOCUS-DISK-001); once indexing has started, the storage guard pauses it before the disk fills.
+ */
+function buildServer(entry: RegistrySource, ctx: BuildContext): ServedSource {
+  const cfg = ctx.config.server;
+  if (ctx.config.serverError) return served(entry, null, withCode("LOCUS-SERVER-003", ctx.config.serverError));
+  if (cfg.type === "none") return served(entry, null, withCode("LOCUS-SERVER-003", "LOCUS_SERVER_TYPE isn't set, so there is no server to index."));
+  const connector = createConnector(cfg);
+  const paths = libraryPaths(ctx.config.dataDir);
+  const noteFile = path.join(paths.root, "server-preflight.json");
+  const fingerprint = serverFingerprint(cfg);
+  const beforeScan = async (signal: AbortSignal) => {
+    const prev = readPreflight(noteFile);
+    if (prev && prev.fingerprint === fingerprint && prev.ok) return;
+    let counted;
+    try {
+      counted = await measureServer(connector, signal, ctx.config.maxFileBytes);
+    } catch (err) {
+      if (err instanceof ConnectorError) throw new Error(withCode(err.code, err.message));
+      throw err;
+    }
+    const plan = planSpace({
+      ...counted,
+      freeBytes: diskInfo(ctx.config.dataDir).freeBytes,
+      reserveBytes: ctx.config.minFreeBytes,
+      indexBytes: new UsageMeter(paths).usedBytes(),
+    });
+    writePreflight(noteFile, { fingerprint, at: new Date().toISOString(), files: plan.files, pdfBytes: plan.pdfBytes, estimateBytes: plan.estimateBytes, ok: plan.fits });
+    if (!plan.fits) throw new Error(spaceMessage(plan, ctx.config.dataDir));
+  };
+  const source = new ConnectorSource({ id: entry.id, name: entry.name, connector, maxFileBytes: ctx.config.maxFileBytes, settleSeconds: ctx.config.settleSeconds, beforeScan });
+  return { ...served(entry, source, null), rescanMinutes: cfg.syncIntervalMin };
 }

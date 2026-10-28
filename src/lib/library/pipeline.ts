@@ -183,6 +183,8 @@ export interface ServedSource {
   label: string;
   state: "active" | "paused" | "removing";
   rescanRequestedAt: string | null;
+  /** How often this source is rescanned, in minutes; the library's setting when absent. */
+  rescanMinutes?: number;
   /** Null when the source can't be built (bad settings, a folder that moved...): `error` says why. */
   source: LibrarySource | null;
   error: string | null;
@@ -532,7 +534,7 @@ export class LibraryIndexer {
       const st = this.scanStates.get(s.id) ?? { running: false, last: 0, handledRequest: null };
       this.scanStates.set(s.id, st);
       const requested = s.rescanRequestedAt !== null && s.rescanRequestedAt !== st.handledRequest;
-      const due = st.last === 0 || this.now() - st.last >= this.o.config.rescanMinutes * 60_000;
+      const due = st.last === 0 || this.now() - st.last >= (s.rescanMinutes ?? this.o.config.rescanMinutes) * 60_000;
       if (st.running || (!requested && !due)) continue;
       st.running = true;
       if (requested) {
@@ -859,7 +861,8 @@ export class LibraryIndexer {
     }
     if (completed && !sample) {
       this.scanCompleted.set(source.id, scanId);
-      if (this.lastErrors.get(source.id)) {
+      // A completed scan means the source answers again. (undefined: a one-pass run that never saw the error it is clearing.)
+      if (this.lastErrors.get(source.id) !== null) {
         try {
           this.write((db) => setSourceError(db, source.id, null));
           this.lastErrors.set(source.id, null);

@@ -35,7 +35,7 @@ export interface RegistrySource {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sources (
   id                    TEXT PRIMARY KEY,
-  kind                  TEXT NOT NULL CHECK (kind IN ('folder','database','drive')),
+  kind                  TEXT NOT NULL CHECK (kind IN ('folder','database','drive','server')),
   name                  TEXT NOT NULL,
   config                TEXT NOT NULL,
   state                 TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','paused','removing')),
@@ -63,10 +63,45 @@ export class RegistryError extends Error {
 
 /** Older registries: add the owner column, and make names unique per owner instead of across everyone. */
 function migrate(db: Database.Database): void {
+  widenKinds(db);
   const cols = db.prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "owner_id")) db.exec("ALTER TABLE sources ADD COLUMN owner_id INTEGER");
   db.exec("DROP INDEX IF EXISTS sources_name");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS sources_owner_name ON sources(coalesce(owner_id, 0), lower(name)) WHERE state != 'removing'");
+}
+
+/**
+ * Registries made before the storage server existed only allow the kinds folder, database and drive. SQLite can't
+ * change a CHECK in place, so the table is rebuilt once (the documented way: new table, copy, drop, rename).
+ */
+function widenKinds(db: Database.Database): void {
+  const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sources'").pluck().get() as string | undefined) ?? "";
+  if (!sql || sql.includes("'server'")) return;
+  const cols = (db.prepare("PRAGMA table_info(sources)").all() as Array<{ name: string }>).map((c) => c.name);
+  const list = cols.join(", ");
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE sources_new (
+        id                    TEXT PRIMARY KEY,
+        kind                  TEXT NOT NULL CHECK (kind IN ('folder','database','drive','server')),
+        name                  TEXT NOT NULL,
+        config                TEXT NOT NULL,
+        state                 TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','paused','removing')),
+        managed_by            TEXT NOT NULL DEFAULT 'app' CHECK (managed_by IN ('app','env')),
+        rescan_requested_at   TEXT,
+        created_at            TEXT NOT NULL,
+        created_by            TEXT,
+        updated_at            TEXT NOT NULL,
+        owner_id              INTEGER
+      )`);
+      db.exec(`INSERT INTO sources_new (${list}) SELECT ${list} FROM sources`);
+      db.exec("DROP TABLE sources");
+      db.exec("ALTER TABLE sources_new RENAME TO sources");
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
 }
 
 export function openRegistry(file: string, options: { readonly?: boolean } = {}): Database.Database {

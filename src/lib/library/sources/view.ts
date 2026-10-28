@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { DatabaseConfig, DriveConfig, FolderConfig, SourceKind } from "./forms";
+import type { DatabaseConfig, DriveConfig, FolderConfig, ServerSourceConfig, SourceKind } from "./forms";
 import type { RegistrySource, SourceState } from "./registry";
 
 /**
@@ -77,6 +77,8 @@ export function locationOf(source: RegistrySource): string {
       return (source.config as FolderConfig).path;
     case "drive":
       return (source.config as DriveConfig).link;
+    case "server":
+      return (source.config as ServerSourceConfig).label;
     case "database": {
       const c = source.config as DatabaseConfig;
       const table = c.schema ? `${c.schema}.${c.table}` : c.table;

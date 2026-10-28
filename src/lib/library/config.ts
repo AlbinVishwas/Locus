@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { envWithFallback } from "../env";
+import { loadServerConfig, type ServerConfig } from "../server/config";
 
 type Env = Record<string, string | undefined>;
 
@@ -84,7 +85,7 @@ export interface LibraryConfig {
   maxFileBytes: number;
   /** Printed page labels need the whole file in memory (pdf.js); only read them up to this size. */
   labelsMaxBytes: number;
-  ocrPages: "auto" | "all";
+  ocrPages: "auto" | "all" | "smart";
   ocrLang: string;
   ocrDpi: number;
   /** External tool processes (pdftotext, pdftoppm, tesseract...) at once. */
@@ -105,6 +106,10 @@ export interface LibraryConfig {
   allowExfat: boolean;
   sample: number | null;
   sampleSeed: number;
+  /** The company storage server (LOCUS_SERVER_*): type "none" when not connected. */
+  server: ServerConfig;
+  /** Set when LOCUS_SERVER_* is wrong: shown on the Server page instead of crashing the worker. */
+  serverError: string | null;
 }
 
 function positive(env: Env, name: string, fallback: number): number {
@@ -152,17 +157,32 @@ function allowedRootsFrom(env: Env): string[] {
 /** LOCUS_MIN_FREE_GB, or its earlier name LIBRARY_MIN_FREE_GB (with a one-time deprecation warning). */
 function minFreeGb(env: Env): number {
   const raw = env === process.env ? envWithFallback("LOCUS_MIN_FREE_GB", "LIBRARY_MIN_FREE_GB") : (env.LOCUS_MIN_FREE_GB ?? env.LIBRARY_MIN_FREE_GB);
-  if (raw === undefined || raw.trim() === "") return 20;
+  // 20 GB for the original always-on library machine; a laptop with a storage server connected keeps 5 GB free.
+  if (raw === undefined || raw.trim() === "") return serverConnected(env) ? 5 : 20;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) throw new Error(`LOCUS_MIN_FREE_GB must be zero or more, got "${raw}"`);
   return value;
 }
 
+function serverConnected(env: Env): boolean {
+  const t = (env.LOCUS_SERVER_TYPE ?? "none").trim().toLowerCase();
+  return t === "folder" || t === "s3";
+}
+
 export function loadLibraryConfig(env: Env = process.env): LibraryConfig {
   const explicitDataDir = optionalPath(env, "LOCUS_DATA_DIR");
-  const ocrPages = (env.LIBRARY_OCR_PAGES ?? "auto").trim();
-  if (ocrPages !== "auto" && ocrPages !== "all") {
-    throw new Error(`LIBRARY_OCR_PAGES must be "auto" or "all", got "${ocrPages}"`);
+  // "smart" (also catches broken words and lettering outside the text layer) is the default once a storage
+  // server is connected; the library as it was keeps "auto" unless LIBRARY_OCR_PAGES says otherwise.
+  const ocrPages = (env.LIBRARY_OCR_PAGES ?? (serverConnected(env) ? "smart" : "auto")).trim();
+  if (ocrPages !== "auto" && ocrPages !== "all" && ocrPages !== "smart") {
+    throw new Error(`LIBRARY_OCR_PAGES must be "auto", "all" or "smart", got "${ocrPages}"`);
+  }
+  let server: ServerConfig = { type: "none" };
+  let serverError: string | null = null;
+  try {
+    server = loadServerConfig(env);
+  } catch (err) {
+    serverError = err instanceof Error ? err.message : String(err);
   }
   const concurrency = Math.floor(positive(env, "LIBRARY_CONCURRENCY", Math.max(1, os.availableParallelism() - 2)));
   return {
@@ -194,6 +214,8 @@ export function loadLibraryConfig(env: Env = process.env): LibraryConfig {
     allowExfat: flag(env, "LOCUS_DATA_DIR_ALLOW_EXFAT"),
     sample: env.LIBRARY_SAMPLE?.trim() ? Math.floor(positive(env, "LIBRARY_SAMPLE", 1)) : null,
     sampleSeed: Math.floor(positive(env, "LIBRARY_SAMPLE_SEED", 20261023)),
+    server,
+    serverError,
   };
 }
 

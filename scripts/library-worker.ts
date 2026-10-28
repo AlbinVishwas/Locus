@@ -26,7 +26,9 @@ import { RotatingLog } from "../src/lib/library/logs";
 import { LibraryIndexer } from "../src/lib/library/pipeline";
 import { formatBytes, MemorySampler, progressLine } from "../src/lib/library/progress";
 import { acquireLock, prepareProcessForLibraryRun } from "../src/lib/library/run";
-import { openRegistry } from "../src/lib/library/sources/registry";
+import { openRegistry, requestRescan } from "../src/lib/library/sources/registry";
+import { SERVER_SOURCE_ID } from "../src/lib/server/status";
+import { startFolderWatcher } from "../src/lib/server/watcher";
 import { DataDirGuard, StorageRefusedError } from "../src/lib/library/storage/guard";
 import { createRegistryControl, syncEnvSources } from "../src/lib/library/worker";
 import type { IndexerEvent } from "../src/lib/library/pipeline";
@@ -82,6 +84,8 @@ async function main() {
   const registry = openRegistry(paths.sources);
   syncEnvSources(registry, config);
   const control = createRegistryControl(registry, config);
+  // A local or mounted server folder: ask for a sync as soon as files change, on top of the timed scan.
+  let stopWatching = () => {};
   log(`Library data: ${paths.root} (${guard.info?.volumeName ?? "?"}, ${guard.info?.fsType}); limit ${formatBytes(config.maxBytes)}, keeping ${formatBytes(config.minFreeBytes)} free.`);
 
   // The administrator's activity log (users mode only): storage pauses and sources in trouble.
@@ -94,6 +98,18 @@ async function main() {
         }
       }
     : undefined;
+  if (config.server.type === "folder" && process.env.LOCUS_SERVER_WATCH?.trim().toLowerCase() !== "false") {
+    stopWatching = startFolderWatcher(config.server.path, {
+      log,
+      onChange: () => {
+        try {
+          requestRescan(registry, SERVER_SOURCE_ID);
+        } catch {
+          // the registry is momentarily busy; the timed scan covers it
+        }
+      },
+    });
+  }
   const indexer = new LibraryIndexer({ config, guard, sources: [], log, onFailure: (e) => failureLog.write(JSON.stringify(e)), onEvent: recordEvent });
   const memory = new MemorySampler();
   memory.start(5000);
@@ -122,6 +138,7 @@ async function main() {
     await indexer.serve(control, { pollMs });
   } finally {
     clearInterval(ticker);
+    stopWatching();
     memory.stop();
     await control.close();
     registry.close();

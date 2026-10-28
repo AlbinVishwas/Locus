@@ -4,7 +4,8 @@ import { runText, ToolError } from "../../../scripts/indexer/exec";
 import { ocrPage, sourceAfterOcr, type ExtractContext } from "../../../scripts/indexer/extract";
 import { readPageLabels } from "../../../scripts/indexer/labels";
 import type { OcrCache } from "../../../scripts/indexer/ocrCache";
-import { imageCoverage, renderGray, textLayerPage } from "../../../scripts/indexer/pdf";
+import { brokenWordJoins, INK_DPI, inkOutsideText } from "../../../scripts/indexer/ink";
+import { imageCoverage, renderGray, textBoxes, textLayerPage, type PageBoxes } from "../../../scripts/indexer/pdf";
 import type { ExtractedPage } from "../../../scripts/indexer/store";
 import { MAX_PAGE_NO } from "./schema";
 import { SourceFileError } from "./sources/types";
@@ -78,7 +79,8 @@ async function textWindow(file: string, first: number, last: number, timeoutMs: 
 }
 
 export interface LibraryExtractOptions {
-  ocrPages: "auto" | "all";
+  /** "smart" also OCRs pages whose text layer is broken (letter-spaced words, lettering drawn outside the layer); it reads the whole file's word positions, so files over labelsMaxBytes fall back to "auto". */
+  ocrPages: "auto" | "all" | "smart";
   ocrLang: string;
   ocrDpi: number;
   pageTimeoutMs: number;
@@ -144,6 +146,21 @@ export async function* extractPages(
     coverageFailed = true;
   }
 
+  // Smart policy: where every word of the layer sits, to find pieces of broken words and, against a render of
+  // the page, lettering the layer doesn't hold. Without the boxes the check can't be made: on a file small enough
+  // to read them, that means every page that has text is OCR'd (as OCR_PAGES=all would); on a large file the
+  // plain "auto" rules apply.
+  const wantSmart = o.ocrPages === "smart" && sizeBytes <= o.labelsMaxBytes;
+  let boxes: PageBoxes[] | null = null;
+  if (wantSmart) {
+    try {
+      boxes = await o.limit(() => textBoxes(file, o.pageTimeoutMs * 2));
+    } catch (err) {
+      log(`word positions failed (${toolMessage(err)}); OCR'ing every page that has text`);
+    }
+  }
+  const smartUnchecked = wantSmart && boxes === null;
+
   const ocrCtx: ExtractContext = {
     config: { ...loadConfig(), ocrLang: o.ocrLang, ocrDpi: o.ocrDpi, pageTimeoutMs: o.pageTimeoutMs },
     limit: o.limit,
@@ -181,9 +198,24 @@ export async function* extractPages(
       layers.map(async (layerText, i): Promise<ExtractedPage> => {
         const pageNo = first + i;
         const idx = pageNo - 1;
-        const plan = layerErrors[i]
+        const planOptions = {
+          ...t,
+          ocrAllPages: o.ocrPages === "all" || smartUnchecked,
+          ocrMode: wantSmart && !smartUnchecked ? ("smart" as const) : undefined,
+          brokenJoins: boxes?.[idx] ? brokenWordJoins(boxes[idx]) : 0,
+        };
+        let plan = layerErrors[i]
           ? { checkBlank: true, ocrReason: "no-text-layer" as OcrReason }
-          : planPage(layerText, coverage[idx], { ...t, ocrAllPages: o.ocrPages === "all" });
+          : planPage(layerText, coverage[idx], planOptions);
+        if (!layerErrors[i] && planOptions.ocrMode === "smart" && !plan.ocrReason && boxes?.[idx]) {
+          // The layer looks fine so far; check the page for lettering it doesn't account for.
+          try {
+            const pgm = parsePgm(await o.limit(() => renderGray(file, pageNo, INK_DPI, o.pageTimeoutMs)));
+            plan = planPage(layerText, coverage[idx], { ...planOptions, uncoveredInk: inkOutsideText(pgm, boxes[idx]) });
+          } catch {
+            plan = { checkBlank: false, ocrReason: "all-pages" as OcrReason };
+          }
+        }
         const page: ExtractedPage = {
           pageNo,
           pageLabel: labels?.[idx] ?? null,

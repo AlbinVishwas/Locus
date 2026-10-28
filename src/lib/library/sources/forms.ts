@@ -6,7 +6,7 @@ import type { Dialect } from "./db/sql";
  * is sealed separately (secrets.ts) and appears here only as a flag.
  */
 
-export type SourceKind = "folder" | "database" | "drive";
+export type SourceKind = "folder" | "database" | "drive" | "server";
 
 export interface FolderConfig {
   /** The real path of the folder, resolved inside an allowed root. */
@@ -47,7 +47,17 @@ export interface DriveConfig {
   folderName?: string;
 }
 
-export type SourceConfig = FolderConfig | DatabaseConfig | DriveConfig;
+/** The company storage server set up in .env (LOCUS_SERVER_*). Only non-secret facts live here; the connection comes from the environment. */
+export interface ServerSourceConfig {
+  type: "folder" | "s3";
+  /** What people see (never a secret). */
+  label: string;
+  /** Changes when the place being indexed changes. */
+  fingerprint: string;
+  syncIntervalMin: number;
+}
+
+export type SourceConfig = FolderConfig | DatabaseConfig | DriveConfig | ServerSourceConfig;
 
 export const MAX_NAME_CHARS = 80;
 

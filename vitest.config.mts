@@ -17,6 +17,7 @@ const LIBRARY_INTEGRATION = [
   "src/lib/library/walk.test.ts",
   "src/lib/library/verify.test.ts",
   "src/lib/library/serve.test.ts",
+  "src/lib/server/serverSync.test.ts",
   "scripts/share.test.ts",
   "scripts/share-health.test.ts",
 ];

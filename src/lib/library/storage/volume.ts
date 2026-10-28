@@ -136,7 +136,69 @@ export function parseMountLine(out: string, mountPoint: string): { fsType: strin
   return null;
 }
 
+/** Filesystem types that are network mounts on Linux (/proc/mounts). SQLite's file locking isn't safe on them. */
+const LINUX_NETWORK_TYPES = new Set(["nfs", "nfs4", "cifs", "smb3", "smbfs", "afs", "ceph", "glusterfs", "fuse.sshfs", "fuse.rclone", "9p", "davfs", "fuse.davfs", "ncpfs"]);
+
+/** The /proc/mounts line whose mount point is the longest prefix of `real`: its filesystem type and mount point. */
+export function parseProcMounts(text: string, real: string): { mountPoint: string; fsType: string; device: string } | null {
+  let best: { mountPoint: string; fsType: string; device: string } | null = null;
+  for (const line of text.split("\n")) {
+    const [device, rawMount, fsType] = line.split(" ");
+    if (!rawMount || !fsType) continue;
+    const mountPoint = rawMount.replace(/\\040/g, " ");
+    const within = real === mountPoint || real.startsWith(mountPoint.endsWith("/") ? mountPoint : mountPoint + "/");
+    if (within && (!best || mountPoint.length >= best.mountPoint.length)) best = { mountPoint, fsType, device };
+  }
+  return best;
+}
+
+/**
+ * The volume check on Windows and Linux, where diskutil doesn't exist. What can be learned without it: whether
+ * the path is a Windows network (UNC) path or sits on a Linux network filesystem, and whether it's writable.
+ * No volume UUID is recorded (the marker then just says "this folder"), because device numbers aren't stable
+ * across reboots on Linux and a false "different volume" refusal is worse than none.
+ */
+export function probeGeneric(
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+  readMounts: () => string = () => fs.readFileSync("/proc/mounts", "utf8"),
+  realpath: (p: string) => string = fs.realpathSync
+): VolumeInfo {
+  const real = realpath(dir);
+  let fsType = "unknown";
+  let mountPoint = path.parse(real).root;
+  let device = "unknown";
+  let local = true;
+  if (platform === "win32") {
+    // \\server\share and \\?\UNC\server\share are network paths. A mapped drive letter that points at a share can't be told apart without a Windows API call; the free-space and reserve checks still apply.
+    if (/^\\\\/.test(real) && !/^\\\\\?\\[A-Za-z]:/.test(real)) {
+      local = false;
+      fsType = "smb";
+    }
+  } else if (platform === "linux") {
+    try {
+      const m = parseProcMounts(readMounts(), real);
+      if (m) {
+        ({ mountPoint, fsType, device } = m);
+        local = !LINUX_NETWORK_TYPES.has(fsType);
+      }
+    } catch {
+      // No /proc (a container without it): treat as local.
+    }
+  }
+  let writable: boolean | null = null;
+  try {
+    fs.accessSync(real, fs.constants.W_OK);
+    writable = true;
+  } catch {
+    writable = false;
+  }
+  return { dir: real, device, mountPoint, fsType, local, internal: true, busProtocol: null, container: null, volumeUuid: null, volumeName: null, writable };
+}
+
 export async function probeVolume(dir: string, run: Runner = defaultRunner): Promise<VolumeInfo> {
+  // diskutil, df -P and mount (macOS output formats) are only used on macOS (or when a test supplies its own runner).
+  if (process.platform !== "darwin" && run === defaultRunner) return probeGeneric(dir);
   const real = fs.realpathSync(dir);
   const { device, mountPoint } = parseDf(await run("df", ["-P", real]));
   const mountLine = parseMountLine(await run("mount", []), mountPoint);
