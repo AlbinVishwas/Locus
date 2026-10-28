@@ -37,6 +37,7 @@ the files stay indexed until the account removes them or the session is deleted.
 | Limit | Default | Setting |
 | --- | --- | --- |
 | PDFs in one pick | 500 | `MAX_FOLDER_FILES` |
+| Files sent at once | 4 | `LOCUS_UPLOAD_PARALLEL` |
 | Size of one file | 90 MB (never above `MAX_UPLOAD_FILE_BYTES`, 100 MB) | `MAX_UPLOAD_FILE_BYTES` |
 | Storage for everything | 5 GB | `STORAGE_CAP_BYTES` |
 | One account's uploads | 1000 MB (users mode) | `LOCUS_USER_UPLOAD_MB` |

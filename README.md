@@ -118,10 +118,12 @@ Indexer settings (environment variables, all optional):
 | --- | --- | --- |
 | `TENDERS_DIR` | `data/tenders` | Folder of PDFs to index |
 | `SEARCH_INDEX_PATH` | `data/index/search.db` | Index file (also read by `/api/search`) |
-| `OCR_LANG` | `eng+hin` | Tesseract language(s). Indian tender documents often carry Devanagari text that `eng` alone misreads as garbage; `eng+hin` costs roughly 30-55% more time per page, only at index/upload time. |
-| `OCR_PAGES` | `all` | `all`: OCR every non-blank page; `auto`: only pages the heuristics flag |
+| `OCR_LANG` | `eng+hin` for the library; uploads read English first and English + Hindi only on pages that show Devanagari | Tesseract language(s). Indian tender documents often carry Devanagari text that `eng` alone misreads as garbage; `eng+hin` costs roughly 30-55% more time per page. Setting it reads every page in that language. |
+| `OCR_PAGES` | `all` for the library, `smart` for uploads | `all`: OCR every non-blank page; `auto`: only pages the heuristics flag; `smart`: `auto` plus broken text layers and lettering drawn outside the layer. See `docs/faster-uploads.md`. |
 | `OCR_DPI` | `300` | Render resolution for OCR |
-| `OCR_CONCURRENCY` | cores - 2 | Parallel OCR processes |
+| `OCR_CONCURRENCY` | cores - 2 for the library, every core for uploads | Parallel OCR processes |
+| `OCR_NICE` | `0` for the library, `10` for uploads | Priority the OCR tools run at, so OCR on every core leaves the laptop responsive |
+| `LOCUS_UPLOAD_PARALLEL` | `4` | Files the browser sends at once (1-8) |
 | `PAGE_TIMEOUT_MS` | `120000` | Per tool call; a page over it is recorded as failed |
 
 ## Uploads
