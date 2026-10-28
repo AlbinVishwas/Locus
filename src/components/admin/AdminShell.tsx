@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useFeatures } from "@/components/FeaturesProvider";
 
 const TABS = [
+  { href: "/server", label: "Server", needsLibrary: true },
   { href: "/sources", label: "Sources", needsLibrary: true },
   { href: "/users", label: "Users" },
   { href: "/activity", label: "Activity" },

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { LibraryHit, LibrarySearchResult } from "@/lib/library/query";
 import { searchLibraryPage, type LibrarySearchResponse } from "@/lib/libraryClient";
-import { Badge, Snippet } from "./SearchResultCard";
+import { Badge, OpenPdf, Snippet } from "./SearchResultCard";
 
 /**
  * One turn's document-library results: the deterministic answer to "where
@@ -145,6 +145,7 @@ function Results({ initial, source }: { initial: LibrarySearchResult; source: st
                     <span className="rounded-full bg-cream/15 px-2 py-0.5 font-medium tabular-nums text-cream">Page {hit.pageNo}</span>
                     {hit.pageLabel && hit.pageLabel !== String(hit.pageNo) && <span>printed as {hit.pageLabel}</span>}
                     {hit.ocrOnly && <Badge title="Found only in the OCR reading — OCR can misread characters">OCR</Badge>}
+                    {(hit.sourceKind === "server" || hit.sourceKind === "folder") && <OpenPdf href={`/api/library/file?doc=${hit.docId}`} name={hit.displayName} page={hit.pageNo} />}
                   </div>
                   <p className="leading-relaxed text-secondary">
                     <Snippet parts={hit.snippet} />

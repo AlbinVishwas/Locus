@@ -118,6 +118,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <StorageCard />
           {isAdmin && (
             <div className="mb-1 flex flex-col">
+              {libraryEnabled && <AdminLink href="/server">Server</AdminLink>}
               {libraryEnabled && <AdminLink href="/sources">Sources</AdminLink>}
               <AdminLink href="/users">Users</AdminLink>
               <AdminLink href="/activity">Activity</AdminLink>

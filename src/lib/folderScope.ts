@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { errorText } from "./httpError";
 
 /**
  * The folder the user picked on their own device, if a search is limited to
@@ -127,6 +128,6 @@ export interface FolderPlan {
 
 export async function planFolder(name: string, files: Array<{ path: string; size: number; sha256: string }>): Promise<FolderPlan> {
   const res = await fetch("/api/folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, files }) });
-  if (!res.ok) throw new Error((await res.text().catch(() => "")) || res.statusText);
+  if (!res.ok) throw new Error(await errorText(res));
   return (await res.json()) as FolderPlan;
 }

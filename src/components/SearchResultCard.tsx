@@ -158,6 +158,7 @@ export default function SearchResultCard({
             filename={docHits[0].filename}
             hits={docHits}
             totalHits={hitCountByDoc.get(docId) ?? docHits.length}
+            openHref={conversationId ? `/api/uploads/file?conversationId=${encodeURIComponent(conversationId)}&docId=${docId}` : undefined}
           />
         ))}
         {notYetShown.map((d) => (
@@ -207,7 +208,7 @@ export default function SearchResultCard({
   );
 }
 
-function DocumentGroup({ filename, hits, totalHits }: { filename: string; hits: PageHit[]; totalHits: number }) {
+function DocumentGroup({ filename, hits, totalHits, openHref }: { filename: string; hits: PageHit[]; totalHits: number; openHref?: string }) {
   return (
     <div className="rounded-lg bg-page px-3 py-2.5">
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
@@ -229,6 +230,7 @@ function DocumentGroup({ filename, hits, totalHits }: { filename: string; hits: 
                 <span>printed as {hit.pageLabel}</span>
               )}
               {hit.ocrOnly && <Badge title="Found only in the OCR reading — OCR can misread characters">OCR</Badge>}
+              {openHref && <OpenPdf href={openHref} name={filename} page={hit.pageNo} />}
             </div>
             <p className="leading-relaxed text-secondary">
               <Snippet parts={hit.snippet} />
@@ -254,6 +256,21 @@ export function Snippet({ parts }: { parts: SnippetPart[] }) {
         );
       })}
     </>
+  );
+}
+
+/** "Open PDF": the original, opened at this page in a new tab. The browser only ever sees a Locus link; Locus streams the file after checking who is asking. */
+export function OpenPdf({ href, name, page }: { href: string; name: string; page: number }) {
+  return (
+    <a
+      href={`${href}#page=${page}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open ${name} at page ${page}`}
+      className="rounded-full border border-line px-2 py-0.5 text-[11px] text-secondary hover:bg-surface-hover hover:text-primary"
+    >
+      Open PDF ↗
+    </a>
   );
 }
 

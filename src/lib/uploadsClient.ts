@@ -4,6 +4,8 @@
  * nothing there can end up in a client bundle by accident.
  */
 
+import { errorText } from "./httpError";
+
 export interface ConversationFile {
   id: number;
   originalFilename: string;
@@ -109,7 +111,7 @@ export async function uploadFile(
         await sleep(Math.min(8000, 800 * 2 ** attempt));
         continue;
       }
-      onEvent({ type: "error", message: await res.text().catch(() => res.statusText) });
+      onEvent({ type: "error", message: await errorText(res) });
       return;
     }
 

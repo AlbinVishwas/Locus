@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Chat from "./Chat";
+import ServerBanner from "./ServerBanner";
 import Sidebar, { PanelIcon } from "./Sidebar";
 import { useConversations } from "./ConversationsProvider";
 import { useMediaQuery } from "@/lib/useMediaQuery";
@@ -42,15 +43,18 @@ export default function AppShell() {
       )}
 
       <div
-        className={`h-dvh transition-[margin-left] duration-200 ease-in-out ${
+        className={`flex h-dvh flex-col transition-[margin-left] duration-200 ease-in-out ${
           isSidebarOpen ? "md:ml-[248px]" : "md:ml-0"
         }`}
       >
-        <Chat
-          key={activeConversation.id}
-          conversation={activeConversation}
-          onMessagesChange={updateActiveMessages}
-        />
+        <ServerBanner />
+        <div className="min-h-0 flex-1 [&>div]:h-full">
+          <Chat
+            key={activeConversation.id}
+            conversation={activeConversation}
+            onMessagesChange={updateActiveMessages}
+          />
+        </div>
       </div>
     </div>
   );

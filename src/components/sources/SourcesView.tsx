@@ -175,6 +175,13 @@ const ICON: Record<SourceView["kind"], React.ReactNode> = {
     </>
   ),
   drive: <path d="M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9H7Z" />,
+  server: (
+    <>
+      <rect x="3" y="4" width="18" height="6" rx="1.5" />
+      <rect x="3" y="14" width="18" height="6" rx="1.5" />
+      <path d="M7 7h.01M7 17h.01" />
+    </>
+  ),
 };
 
 function SourceRow({ s, onAct, onRemove }: { s: SourceView; onAct: (s: SourceView, a: "pause" | "resume" | "rescan") => void; onRemove: () => void }) {

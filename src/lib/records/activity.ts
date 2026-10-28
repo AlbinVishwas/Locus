@@ -21,6 +21,7 @@ export type ActivityKind =
   | "upload_ready"
   | "upload_failed"
   | "upload_deleted"
+  | "open_original"
   | "session_deleted"
   | "access_denied"
   | "source_added"

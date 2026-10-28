@@ -8,7 +8,7 @@ import { userSourcesEnabled, usersEnabled } from "@/lib/users/mode";
  * routes then checks the account itself (src/lib/session.ts), so this is the
  * first of two checks, not the only one.
  */
-const ADMIN_PREFIXES = ["/sources", "/users", "/activity", "/search", "/api/sources", "/api/users", "/api/activity", "/api/search", "/api/library"];
+const ADMIN_PREFIXES = ["/server", "/sources", "/users", "/activity", "/search", "/api/server", "/api/sources", "/api/users", "/api/activity", "/api/search", "/api/library"];
 /** With LOCUS_USER_SOURCES=true these are open to ordinary accounts too (the routes then limit them to their own folders). */
 const SOURCES_PREFIXES = ["/sources", "/api/sources", "/api/library"];
 const isAdminPath = (p: string) => {
