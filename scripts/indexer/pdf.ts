@@ -50,6 +50,41 @@ export async function textLayerAll(
   return parts.slice(0, pageCount);
 }
 
+export interface WordBox {
+  text: string;
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
+}
+
+export interface PageBoxes {
+  /** Page size in points, as pdftotext reports it. */
+  width: number;
+  height: number;
+  words: WordBox[];
+}
+
+/** Where every word of the text layer sits on its page (pdftotext -bbox), one entry per page. */
+export async function textBoxes(file: string, timeoutMs: number): Promise<PageBoxes[]> {
+  const out = await runText("pdftotext", ["-bbox", "-enc", "UTF-8", file, "-"], { timeoutMs });
+  const pages: PageBoxes[] = [];
+  let current: PageBoxes | null = null;
+  for (const line of out.split("\n")) {
+    const page = line.match(/<page width="([\d.]+)" height="([\d.]+)"/);
+    if (page) {
+      current = { width: Number(page[1]), height: Number(page[2]), words: [] };
+      pages.push(current);
+      continue;
+    }
+    const word = line.match(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)</);
+    if (word && current) {
+      current.words.push({ xMin: Number(word[1]), yMin: Number(word[2]), xMax: Number(word[3]), yMax: Number(word[4]), text: word[5] });
+    }
+  }
+  return pages;
+}
+
 export async function textLayerPage(file: string, page: number, timeoutMs: number): Promise<string> {
   const p = String(page);
   const out = await runText("pdftotext", ["-enc", "UTF-8", "-f", p, "-l", p, file, "-"], {
@@ -105,31 +140,99 @@ export async function renderPng(
   page: number,
   dpi: number,
   outBase: string,
-  timeoutMs: number
+  timeoutMs: number,
+  niceness = 0
 ): Promise<string> {
   const p = String(page);
   await run(
     "pdftoppm",
     ["-r", String(dpi), "-gray", "-png", "-singlefile", "-f", p, "-l", p, file, outBase],
-    { timeoutMs }
+    { timeoutMs, niceness }
   );
   const png = `${outBase}.png`;
   await fs.access(png);
   return png;
 }
 
+/**
+ * Renders one page to `<outBase>.pgm` for OCR. An uncompressed greyscale image
+ * takes a few milliseconds to write where a PNG takes about half a second at
+ * 300 DPI, for the same pixels; tesseract must then be told the resolution
+ * (--dpi), because a PGM doesn't carry it. The text it reads is identical.
+ */
+export async function renderForOcr(
+  file: string,
+  page: number,
+  dpi: number,
+  outBase: string,
+  timeoutMs: number,
+  niceness = 0
+): Promise<string> {
+  const p = String(page);
+  await run("pdftoppm", ["-r", String(dpi), "-gray", "-singlefile", "-f", p, "-l", p, file, outBase], { timeoutMs, niceness });
+  const pgm = `${outBase}.pgm`;
+  await fs.access(pgm);
+  return pgm;
+}
+
 /** Tesseract on one image, one thread (we parallelise across pages instead). */
 export async function ocrImage(
   image: string,
   lang: string,
-  timeoutMs: number
+  timeoutMs: number,
+  niceness = 0,
+  /** The image's resolution, when it carries none (a PGM). */
+  dpi?: number
 ): Promise<string> {
-  return runText("tesseract", [image, "stdout", "-l", lang, "--psm", "3"], {
+  return runText("tesseract", [image, "stdout", "-l", lang, "--psm", "3", ...(dpi ? ["--dpi", String(dpi)] : [])], {
     timeoutMs,
+    niceness,
     // Tesseract otherwise starts one thread per core for each page; with
     // eight pages in flight that is 80 threads fighting over 10 cores.
     env: { ...process.env, OMP_THREAD_LIMIT: "1" },
   });
+}
+
+export interface OcrReading {
+  text: string;
+  /** Share of recognised words tesseract was under 60% sure of: high on pages in a script the language can't read. */
+  lowConfidenceShare: number;
+}
+
+/**
+ * Tesseract on one image like ocrImage, also reporting how sure it was of its
+ * words. One pass writes both the text and the per-word confidences, so the
+ * text is the same as ocrImage's.
+ */
+export async function ocrImageWithConfidence(
+  image: string,
+  lang: string,
+  timeoutMs: number,
+  niceness = 0,
+  dpi?: number
+): Promise<OcrReading> {
+  const base = image.replace(/\.(png|pgm)$/i, "") + `-${lang.replace(/\W+/g, "_")}`;
+  try {
+    await run("tesseract", [image, base, "-l", lang, "--psm", "3", ...(dpi ? ["--dpi", String(dpi)] : []), "txt", "tsv"], {
+      timeoutMs,
+      niceness,
+      env: { ...process.env, OMP_THREAD_LIMIT: "1" },
+    });
+    const text = await fs.readFile(`${base}.txt`, "utf8");
+    const tsv = (await fs.readFile(`${base}.tsv`, "utf8")).split("\n").slice(1);
+    let words = 0;
+    let low = 0;
+    for (const line of tsv) {
+      const c = line.split("\t");
+      if (c.length < 12 || !c[11].trim()) continue;
+      words++;
+      if (Number(c[10]) < 60) low++;
+    }
+    return { text, lowConfidenceShare: words === 0 ? 0 : low / words };
+  } finally {
+    await fs.rm(`${base}.txt`, { force: true });
+    await fs.rm(`${base}.tsv`, { force: true });
+  }
 }
 
 export async function sha256File(file: string): Promise<string> {
