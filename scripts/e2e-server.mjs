@@ -84,6 +84,7 @@ const full = await until(async () => {
   return s.index.documents >= expected && s.index.pending === 0 ? s : null;
 }, 600_000, 500);
 const fullMs = Date.now() - t0;
+check("progress was visible while indexing (pending files / scanning shown)", sawProgress || fullMs < 1500, sawProgress ? "seen" : "finished too fast to see");
 check("everything is indexed", Boolean(full), `${full?.index.documents ?? "?"} of ${expected} files, ${(fullMs / 1000).toFixed(1)} s after the check started`);
 const s1 = await status();
 check("progress, sync time and disk numbers are shown", s1.sync.lastSyncedAt !== null && s1.space?.freeBytes > 0 && s1.index.pagesIndexed > 0, `last synced ${s1.sync.lastSyncedAt}`);

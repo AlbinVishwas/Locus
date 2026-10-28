@@ -158,8 +158,8 @@ export default function ServerView() {
 
           {status.failures.length > 0 && (
             <section className={card} aria-labelledby="srv-fail">
-              <h2 id="srv-fail" className={label}>Files that couldn't be read ({status.failures.length})</h2>
-              <p className="mt-1 text-[12px] text-secondary">These were skipped; everything else carried on. A file is tried again when it changes on the server.</p>
+              <h2 id="srv-fail" className={label}>Files that couldn&apos;t be read ({status.failures.length})</h2>
+              <p className="mt-1 text-[12px] text-secondary">These were skipped, and everything else carried on. A file is tried again when it changes on the server.</p>
               <ul className="mt-2 divide-y divide-line text-[13px]">
                 {status.failures.map((f) => (
                   <li key={f.file} className="py-2">

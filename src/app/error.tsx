@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 import ErrorPage from "@/components/ErrorPage";
 
@@ -14,9 +15,9 @@ export default function RouteError({ error, reset }: { error: Error & { digest?:
       <button type="button" onClick={reset} className="cursor-pointer rounded-lg bg-accent px-3.5 py-2 text-[13px] font-medium text-accent-ink">
         Try again
       </button>
-      <a href="/" className="rounded-lg border border-line px-3.5 py-2 text-[13px] text-primary hover:bg-surface-hover">
+      <Link href="/" className="rounded-lg border border-line px-3.5 py-2 text-[13px] text-primary hover:bg-surface-hover">
         Back to search
-      </a>
+      </Link>
     </ErrorPage>
   );
 }

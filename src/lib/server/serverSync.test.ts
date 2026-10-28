@@ -342,13 +342,13 @@ describe("disk space", () => {
     const { planSpace, spaceMessage, measureServer } = await import("./preflight");
     const counted = await measureServer(new FolderConnector(server), new AbortController().signal, 1e9);
     expect(counted.files).toBe(2);
-    const plan = planSpace({ ...counted, freeBytes: 5 * 1024 ** 2 + 2048, reserveBytes: 5 * 1024 ** 2 });
+    const plan = planSpace({ ...counted, freeBytes: 5 * 1024 ** 2 + 100, reserveBytes: 5 * 1024 ** 2 });
     expect(plan.fits).toBe(false);
 
     const run = await syncOnce(new FolderConnector(server), data, {
       beforeScan: async (signal) => {
         const m = await measureServer(new FolderConnector(server), signal, 1e9);
-        const p = planSpace({ ...m, freeBytes: 5 * 1024 ** 2 + 2048, reserveBytes: 5 * 1024 ** 2 });
+        const p = planSpace({ ...m, freeBytes: 5 * 1024 ** 2 + 100, reserveBytes: 5 * 1024 ** 2 });
         if (!p.fits) throw new Error(spaceMessage(p, data));
       },
     });
@@ -358,7 +358,7 @@ describe("disk space", () => {
     const err = db.prepare("SELECT last_error FROM sources WHERE id = 'env-server'").pluck().get() as string;
     db.close();
     expect(err).toMatch(/^LOCUS-DISK-001: Not enough disk space/);
-    expect(err).toMatch(/needs about \d+ KB, but only 2 KB is free after keeping 5 MB in reserve/);
+    expect(err).toMatch(/needs about \d+ KB, but only 1 KB is free after keeping 5 MB in reserve/); // 100 bytes usable, shown as the smallest unit
     expect(err).toMatch(/LOCUS_DATA_DIR/);
   }, 60_000);
 
