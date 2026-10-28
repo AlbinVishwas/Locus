@@ -152,7 +152,7 @@ const rescan = await api("/api/server/rescan", { method: "POST", body: {} });
 check("Rescan now is accepted", rescan.status === 200);
 const synced = await until(async () => {
   const s = await status();
-  const done = s.index.pending === 0 && !s.sync.scanning && (await search("changedmarkerqq")).hits.length > 0;
+  const done = s.index.pending === 0 && !s.sync.scanning && (await search("changedmarkerqq")).hits.length > 0 && (await search(victim.marker)).hits.length === 0;
   return done ? s : null;
 }, 180_000, 500);
 check("the sync finishes", Boolean(synced));

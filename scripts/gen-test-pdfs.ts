@@ -11,7 +11,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { writeFixturePdf } from "./indexer/fixtures";
+import { execFileSync } from "node:child_process";
+import type { FixturePage } from "./indexer/fixtures";
 import { mulberry32 } from "../src/lib/library/pipeline";
 
 export interface GeneratedFile {
@@ -62,6 +63,38 @@ function line(rng: () => number, vocab: string[], words = 9): string {
   return Array.from({ length: words }, () => vocab[Math.floor(rng() * vocab.length)]).join(" ");
 }
 
+
+/**
+ * Like the test fixtures' scanned page (the words drawn into a picture, no text layer, so OCR must read them) but at
+ * 300 dpi and a larger size: the OCR settings Locus really uses, and no misread letters to confuse a check.
+ */
+async function writePdf(file: string, pages: FixturePage[], workDir: string): Promise<void> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  for (const spec of pages) {
+    const page = doc.addPage([595, 842]);
+    let y = 842 - 60;
+    for (const text of spec.lines ?? []) {
+      page.drawText(text, { x: 50, y, size: 12, font });
+      y -= 18;
+    }
+    if (spec.imageWords) {
+      const words = await PDFDocument.create();
+      const bold = await words.embedFont(StandardFonts.HelveticaBold);
+      const wp = words.addPage([595, 300]);
+      wp.drawText(spec.imageWords, { x: 40, y: 130, size: 48, font: bold });
+      const base = path.join(workDir, `w-${process.pid}-${Math.random().toString(36).slice(2)}`);
+      fs.writeFileSync(`${base}.pdf`, await words.save());
+      execFileSync("pdftoppm", ["-r", "300", "-png", "-singlefile", `${base}.pdf`, base]);
+      const png = await doc.embedPng(fs.readFileSync(`${base}.png`));
+      fs.rmSync(`${base}.pdf`);
+      fs.rmSync(`${base}.png`);
+      page.drawImage(png, { x: 0, y: 0, width: 595, height: 842 * (spec.imageHeight ?? 1) });
+    }
+  }
+  fs.writeFileSync(file, await doc.save());
+}
+
 async function typedPdf(file: string, pages: number, rng: () => number, vocab: string[], marker: string, markerPage: number): Promise<void> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -100,30 +133,34 @@ export async function generateTestPdfs(dir: string, options: GenerateOptions = {
     if (kind === "scanned") {
       pages = 2 + Math.floor(rng() * 3);
       markerPage = 1 + Math.floor(rng() * pages);
-      await writeFixturePdf(
+      await writePdf(
         file,
         Array.from({ length: pages }, (_, p) => ({ imageWords: p + 1 === markerPage ? `Reference ${marker}` : `Scanned page ${p + 1}` })),
-        { workDir: work }
+        work
       );
     } else if (kind === "mixed") {
       pages = 3 + Math.floor(rng() * 3);
-      markerPage = 1 + Math.floor(rng() * pages);
-      await writeFixturePdf(
+      markerPage = 1 + 2 * Math.floor(rng() * Math.ceil(pages / 2)); // the typed pages are the odd-numbered ones
+      await writePdf(
         file,
         Array.from({ length: pages }, (_, p) => (p % 2 === 0 ? { lines: [line(rng, vocab), line(rng, vocab), p + 1 === markerPage ? `Reference ${marker} typed` : line(rng, vocab)] } : { imageWords: `Annexure page ${p + 1}`, imageHeight: 0.5 })),
-        { workDir: work }
+        work
       );
     } else {
       pages = 3 + Math.floor(rng() * 38);
       markerPage = 1 + Math.floor(rng() * pages);
       await typedPdf(file, pages, rng, vocab, marker, markerPage);
     }
+    // Files on a server are old: not "still being copied" (see LIBRARY_SETTLE_SECONDS).
+    const aged = new Date(Date.now() - 24 * 3600_000);
+    fs.utimesSync(file, aged, aged);
     out.push({ path: path.relative(dir, file).split(path.sep).join("/"), kind, pages, marker, markerPage, bytes: fs.statSync(file).size });
   }
   // One file that isn't a PDF at all, to see the failure listed and skipped.
   const bad = path.join(dir, "contracts", "corrupt-0001.pdf");
   fs.mkdirSync(path.dirname(bad), { recursive: true });
   fs.writeFileSync(bad, "%PDF-1.4\nthis is not really a pdf\n");
+  fs.utimesSync(bad, new Date(Date.now() - 24 * 3600_000), new Date(Date.now() - 24 * 3600_000));
   out.push({ path: "contracts/corrupt-0001.pdf", kind: "corrupt", pages: 0, marker: null, markerPage: null, bytes: fs.statSync(bad).size });
   fs.rmSync(work, { recursive: true, force: true });
   fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ seed: options.seed ?? 20261028, files: out }, null, 2));

@@ -132,12 +132,26 @@ async function main() {
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
+  // Started by `npm start`: if that process is killed outright, don't carry on as an orphan.
+  const parentPid = Number(process.env.LOCUS_WORKER_PARENT_PID);
+  const parentWatch = Number.isInteger(parentPid) && parentPid > 0
+    ? setInterval(() => {
+        try {
+          process.kill(parentPid, 0);
+        } catch {
+          log("The Locus process that started this indexer is gone: stopping.");
+          indexer.stop();
+        }
+      }, 3000)
+    : null;
+  parentWatch?.unref();
 
   try {
     log("Watching the sources registry. Add, pause, resume, rescan and remove sources from the Sources page.");
     await indexer.serve(control, { pollMs });
   } finally {
     clearInterval(ticker);
+    if (parentWatch) clearInterval(parentWatch);
     stopWatching();
     memory.stop();
     await control.close();

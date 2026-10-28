@@ -54,7 +54,8 @@ server.on("exit", (code) => {
 
 if (isLibraryEnabled() && adminEnabled()) {
   log("Starting the indexer (it reads the storage server and keeps the index up to date)…");
-  const worker = spawn(process.execPath, ["--import", "tsx", path.join("scripts", "library-worker.ts")], { stdio: "inherit", env: { ...env, TSX_DISABLE_CACHE: "1" } });
+  // LOCUS_WORKER_PARENT_PID: the worker stops by itself if this process is killed without getting to stop it.
+  const worker = spawn(process.execPath, ["--import", "tsx", path.join("scripts", "library-worker.ts")], { stdio: "inherit", env: { ...env, TSX_DISABLE_CACHE: "1", LOCUS_WORKER_PARENT_PID: String(process.pid) } });
   children.push(worker);
   worker.on("exit", (code, signal) => {
     if (!stopping) log(`The indexer stopped (${signal ?? `exit ${code}`}). Searching still works; restart Locus to start it again.`);
