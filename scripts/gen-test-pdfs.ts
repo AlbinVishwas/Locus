@@ -81,15 +81,15 @@ async function writePdf(file: string, pages: FixturePage[], workDir: string): Pr
     if (spec.imageWords) {
       const words = await PDFDocument.create();
       const bold = await words.embedFont(StandardFonts.HelveticaBold);
-      const wp = words.addPage([595, 300]);
-      wp.drawText(spec.imageWords, { x: 40, y: 130, size: 48, font: bold });
+      const wp = words.addPage([595, 842]); // a whole page, so the picture isn't stretched when it's placed
+      wp.drawText(spec.imageWords, { x: 60, y: 700, size: 40, font: bold });
       const base = path.join(workDir, `w-${process.pid}-${Math.random().toString(36).slice(2)}`);
       fs.writeFileSync(`${base}.pdf`, await words.save());
       execFileSync("pdftoppm", ["-r", "300", "-png", "-singlefile", `${base}.pdf`, base]);
       const png = await doc.embedPng(fs.readFileSync(`${base}.png`));
       fs.rmSync(`${base}.pdf`);
       fs.rmSync(`${base}.png`);
-      page.drawImage(png, { x: 0, y: 0, width: 595, height: 842 * (spec.imageHeight ?? 1) });
+      page.drawImage(png, { x: 0, y: 0, width: 595, height: 842 });
     }
   }
   fs.writeFileSync(file, await doc.save());

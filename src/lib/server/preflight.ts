@@ -12,8 +12,14 @@ import type { StorageConnector } from "./types";
  * replaces the default (observedRatio), so the estimate sharpens as indexing runs.
  */
 
-/** Index bytes per PDF byte, measured on the generated benchmark set (scripts/bench-server.ts): see docs/server-benchmark.md. */
-export const DEFAULT_INDEX_RATIO = 1.6;
+/**
+ * Index bytes per PDF byte. What the index really costs is per PAGE of text, about 18-19 KB a page, measured on the
+ * generated benchmark set with `npm run bench:server` (docs/server-benchmark.md; 19.7 KB a page on the earlier
+ * 100k-page synthetic test too). A PDF's size per page varies, so the ratio assumes a dense 30 KB per page:
+ * 18.6 / 30 = 0.62, rounded up. Scanned pages cost twice the index (two readings) but their PDFs are several
+ * times larger per page, so they come out lower. Once 20 files are indexed the ratio actually seen replaces this.
+ */
+export const DEFAULT_INDEX_RATIO = 0.65;
 /** Extra room beyond the estimate: the temp file of the largest in-flight PDFs, SQLite growth steps, the OCR cache. */
 export const SAFETY_FACTOR = 1.25;
 

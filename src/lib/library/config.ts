@@ -184,7 +184,10 @@ export function loadLibraryConfig(env: Env = process.env): LibraryConfig {
   } catch (err) {
     serverError = err instanceof Error ? err.message : String(err);
   }
-  const concurrency = Math.floor(positive(env, "LIBRARY_CONCURRENCY", Math.max(1, os.availableParallelism() - 2)));
+// The original always-on library leaves two cores for the OS and the dev server. With a storage server connected the
+  // indexer uses every core (it runs at a lowered priority, so the computer stays usable).
+  const cores = os.availableParallelism();
+  const concurrency = Math.floor(positive(env, "LIBRARY_CONCURRENCY", Math.max(1, serverConnected(env) ? cores : cores - 2)));
   return {
     dataDir: explicitDataDir ?? defaultDataDir(),
     dataDirIsDefault: explicitDataDir === null,
@@ -202,7 +205,7 @@ export function loadLibraryConfig(env: Env = process.env): LibraryConfig {
     ocrLang: env.LIBRARY_OCR_LANG?.trim() || "eng+hin",
     ocrDpi: Math.floor(positive(env, "LIBRARY_OCR_DPI", 300)),
     concurrency,
-    filesInFlight: Math.floor(positive(env, "LIBRARY_FILES_IN_FLIGHT", 4)),
+    filesInFlight: Math.floor(positive(env, "LIBRARY_FILES_IN_FLIGHT", serverConnected(env) ? Math.max(4, Math.ceil(cores / 2)) : 4)),
     pageWindow: Math.floor(positive(env, "LIBRARY_PAGE_WINDOW", 20)),
     pageTimeoutMs: positive(env, "PAGE_TIMEOUT_MS", 120_000),
     fileTimeoutMs: positive(env, "LIBRARY_FILE_TIMEOUT_MS", 30 * 60 * 1000),

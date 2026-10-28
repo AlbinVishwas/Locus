@@ -34,7 +34,7 @@ npm run build && npm run bench  # the 100k-page benchmark (route timings need th
 ```
 
 All the indexer settings are environment variables: `TENDERS_DIR`, `SEARCH_INDEX_PATH`,
-`OCR_LANG`, `OCR_PAGES`, `OCR_DPI`, `OCR_CONCURRENCY`, `PAGE_TIMEOUT_MS`. The README has the table.
+`OCR_LANG`, `OCR_PAGES`, `OCR_DPI`, `OCR_CONCURRENCY`, `PAGE_TIMEOUT_MS`. [docs/reference.md](reference.md) has the table.
 
 ### Git
 

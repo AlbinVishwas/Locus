@@ -15,7 +15,7 @@ The chat feature (model replies, with the same search card above each
 reply) is still all there, switched off. It comes back with one
 setting — `LOCUS_CHAT_ENABLED=true` in `.env.local`, then restart; or
 `chatEnabled` in `src/config/features.ts`. See the
-[README](../README.md#chat-switch).
+[reference](reference.md#chat-switch).
 
 Either way, the answer to "does it mention X" comes from a real text
 search of the files — never from the language model guessing — so a page
@@ -124,7 +124,7 @@ set, Locus behaves exactly as described above. Full guide:
 | Session length | 7 days | How long someone stays logged in after entering the passcode. |
 
 All five are environment variables and can be changed without touching
-code — see the README.
+code — see [reference.md](reference.md).
 
 Since nothing expires on its own, freeing space is a manual, one-click
 action instead: every uploaded file in a session has its own remove

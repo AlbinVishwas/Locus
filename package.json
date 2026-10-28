@@ -36,7 +36,8 @@
     "e2e:searchable-now": "node scripts/e2e-searchable-now.mjs",
     "bench:server": "tsx scripts/bench-server.ts",
     "e2e:server": "node scripts/e2e-server.mjs",
-    "gen:test-pdfs": "tsx scripts/gen-test-pdfs.ts"
+    "gen:test-pdfs": "tsx scripts/gen-test-pdfs.ts",
+    "gen:error-docs": "tsx scripts/gen-error-docs.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1158.0",

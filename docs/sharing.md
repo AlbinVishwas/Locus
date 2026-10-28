@@ -15,7 +15,7 @@ What it does, in order:
 1. **Chat off (the default):** prints that chat is disabled and skips
    the LM Studio check entirely — LM Studio can be closed; nothing in
    search-only mode talks to it. **Chat on** (`LOCUS_CHAT_ENABLED=true`,
-   see the [README](../README.md#chat-switch)): checks LM Studio is
+   see the [reference](reference.md#chat-switch)): checks LM Studio is
    reachable at `http://localhost:1234/v1` and has a model loaded. If
    not, it tells you why and stops — nothing else starts. It reads
    `.env.local` the same way the server does, so the setting there
@@ -128,7 +128,7 @@ itself needs to change.
   Studio, load a model, and make sure its local server is started (the
   button that says "Start Server"), or turn chat off.
 - **Chat replies are missing** — chat is off by default; see the
-  [README](../README.md#chat-switch) to turn it on.
+  [reference](reference.md#chat-switch) to turn it on.
 - **"cloudflared is not installed"** — `brew install cloudflared`.
 - **The tunnel closes on its own** — `npm run share` notices and stops the
   server too, rather than leaving it running with no way to reach it.

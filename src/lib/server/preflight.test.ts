@@ -13,7 +13,7 @@ describe("index size estimate", () => {
   });
 
   it("refuses when it won't fit, and says by how much", () => {
-    const plan = planSpace({ files: 5000, pdfBytes: 50 * GB, freeBytes: 60 * GB, reserveBytes: 5 * GB });
+    const plan = planSpace({ files: 5000, pdfBytes: 100 * GB, freeBytes: 60 * GB, reserveBytes: 5 * GB });
     expect(plan.fits).toBe(false);
     expect(plan.shortByBytes).toBe(plan.estimateBytes - 55 * GB);
     const msg = spaceMessage(plan, "/data/locus");

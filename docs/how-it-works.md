@@ -1,19 +1,23 @@
 # How Locus works
 
-A walkthrough of the code for a technical reader: where uploaded files go, how a PDF becomes
-searchable, how a search runs, and where (and whether) a model is involved. Every step names the
-file and function that does it, so you can open the code beside this page.
+A walkthrough of the code for a technical reader: how Locus reads PDFs from your storage server and
+keeps the index up to date, where uploaded files go, how a PDF becomes searchable, how a search runs,
+how disk space is protected, and where (and whether) a model is involved. Every step names the file
+and function that does it, so you can open the code beside this page.
 
-Paths are relative to the project root. "Index" means the SQLite search database
-(`data/index/search.db`).
+Paths are relative to the project root. Locus keeps two search indexes: the **library index** for the
+storage server and folders added as sources (`data/locus-data/library/library.db`, section 9), and the
+**session index** for files people upload (`data/index/search.db`, sections 3 to 7).
 
 ---
 
 ## 1. The short version
 
-- Locus is a **PDF search tool**. You give it PDFs; it reads their text (running OCR on scanned
-  pages) and stores that text in a SQLite full-text index. A search looks the words up in that index
-  and shows the document, the page number and a snippet.
+- Locus is a **PDF search tool**. You point it at a storage server (a folder, a mounted network share
+  or an S3-compatible server) or upload files; it reads their text (running OCR on scanned pages) and
+  stores that text in a SQLite full-text index **on your own computer**. A search looks the words up in
+  that index and shows the file, the page number and a snippet; a click opens the original PDF at that page.
+- Locus only ever **reads** the storage server. It never writes, moves or deletes anything there.
 - **Search uses no AI model.** It is a database lookup. Page numbers and snippets come from rows the
   indexer wrote, so they cannot be invented. (Section 7.)
 - A language model (Qwen3 4B through LM Studio) exists only as an **optional chat mode, switched off**.
@@ -23,7 +27,13 @@ Paths are relative to the project root. "Index" means the SQLite search database
 
 ---
 
-## 2. The big picture: browser to laptop
+## 2. The big picture
+
+On your own computer the route is short: **browser → `http://localhost:3000` → Locus → the storage server (read-only)**, with the
+index on the computer's disk. `npm start` runs the web app and the indexer together (`scripts/start.ts`).
+
+The rest of this section describes the **optional** way of sharing a running copy outside your network (`npm run share`). It isn't
+needed for the normal setup.
 
 ```
 Browser ──► https://local-chat-one-ivory.vercel.app ──307──► https://<random>.trycloudflare.com ──tunnel──► localhost:3000 (Next.js, on the laptop)
@@ -144,12 +154,13 @@ Written by `insertUploadedDocument()` / `upsertPageOcr()` in `scripts/indexer/st
 | Largest file in a folder pick | (derived) | 90 MB (stays under the tunnel's ~100 MB body limit) | each file | `maxFolderFileBytes` |
 | Files in a normal session | `MAX_FILES_PER_CONVERSATION` | 20 | session | `maxFilesPerConversation` |
 | Files in a folder pick | `MAX_FOLDER_FILES` | 500 | folder | `maxFolderFiles` |
-| **Upload limit per account** | `LOCUS_USER_UPLOAD_MB` | 1000 MB (live app: 5000) | account (sum of its ready uploads in `records.db`) | `userUploadLimitBytes` in `src/lib/users/mode.ts` |
-| **Total storage cap** | `STORAGE_CAP_BYTES` | 5 GB (live app: 25 GB) | whole machine: uploads folder + index folder | `storageCapBytes`, `measureStorageUsage` |
+| **Upload limit per account** | `LOCUS_USER_UPLOAD_MB` | 20000 MB (20 GB) | account (sum of its ready uploads in `records.db`) | `userUploadLimitBytes` in `src/lib/users/mode.ts` |
+| **Total storage cap** | `STORAGE_CAP_BYTES` | half the disk, never under 5 GB | whole machine: uploads folder + index folder | `storageCapBytes` (`src/lib/uploads/config.ts`), `measureStorageUsage` |
+| **Free-disk reserve** | `LOCUS_MIN_FREE_GB` | 5 GB | the disk holding the uploads | `checkUploadSpace` in `src/lib/uploads/space.ts`: refused (LOCUS-DISK-003) before anything is written unless the disk keeps its reserve after twice the file (the file and its index) |
 | Retention | `LOCUS_RETENTION_DAYS` | off | document | `retentionMs`, `src/lib/uploads/cleanup.ts` |
 
-Notes: the per-account limit applies in accounts mode only. The upload path has no free-disk check;
-the library worker has its own (section 9).
+Notes: the per-account limit applies in accounts mode only. A folder pick is checked as a whole, from the sizes the browser
+declares, before anything is sent. The storage server's index has its own disk protection (section 9.6).
 
 ### 3.6 Privacy between accounts
 
@@ -311,19 +322,149 @@ semantic matching, no generated text anywhere in a result. `src/lib/search/query
 
 ---
 
-## 9. My folders / Sources (the library)
+## 9. The storage server and the library
 
-For collections too big to upload (thousands of PDFs, a drive, a database), an administrator adds a
-**source** on the Sources page, and an always-on worker indexes it **in place**.
+Everything that is indexed *in place* (not uploaded) lives in the **library**: a separate SQLite file with its own schema
+(`src/lib/library/schema.ts`) under `LOCUS_DATA_DIR` (default `data/locus-data`): `library/library.db` (the index and the job queue),
+`library/sources.db` (the sources registry), `library/ocr-cache.db`, `library/server-preflight.json` (the last disk estimate). An
+always-on **indexer worker** (`scripts/library-worker.ts` → `src/lib/library/worker.ts`, `pipeline.ts`) reads the registry every
+two seconds and does what it says. `npm start` starts it with the web app.
 
-- **No copying.** A folder source's PDFs are opened read-only from where they are and never copied, written
-  or served by the app (`src/lib/library/sources/folder.ts`). Google Drive files and database rows are the exception by nature: each is fetched to a temp file, indexed, then deleted.
-- **Where the index lives:** under `LOCUS_DATA_DIR` (default `data/locus-data`): `library/library.db` (index + job queue), `library/sources.db` (the sources registry), `library/ocr-cache.db`. Separate from the session index. `libraryPaths()` in `src/lib/library/config.ts` is the one place the paths are decided; `LOCUS_DATA_DIR` can point at an external drive.
-- **The worker:** `scripts/library-worker.ts` → `src/lib/library/worker.ts`, `pipeline.ts`. It watches the registry, scans each source, extracts text with the same tools (and the `all` OCR policy: every page), and writes to `library.db`. `npm run share` starts it when `LOCUS_LIBRARY_ENABLED` and the admin passcode are set.
-- **Which folders may be indexed:** only under the roots in `LOCUS_ALLOWED_ROOTS` (default `/Volumes`) (`src/lib/library/allowedRoots.ts`), checked for every path, again before each scan.
-- **Safety limits:** the library may write at most `LOCUS_LIBRARY_MAX_GB` (default 100) and never fills the disk below `LOCUS_MIN_FREE_GB` (default 20) free. At a limit, indexing pauses and nothing is deleted.
-- **Who may search it:** `POST /api/library/search` (`src/app/api/library/search/route.ts`): the administrator searches everything; with `LOCUS_USER_SOURCES=true` ordinary accounts may add their own folders and search **only those** (`ownedSources()`). Otherwise 403.
-- Details: `docs/library.md`, `docs/sources.md`.
+A *source* is anything the worker reads: a folder (`sources/folder.ts`), a database, a public Google Drive folder, or **the company
+storage server**.
+
+### 9.1 The connector (where the PDFs live)
+
+`src/lib/server/types.ts` defines `StorageConnector`, deliberately small: `list()` (every file with size, modified time and, where the
+server has one, a version tag), `stat()`, `read()` (a byte stream, optionally a range), `test()` and `close()`. Paths are always relative
+to the root, `/`-separated whatever the operating system, and checked by `cleanRelativePath()` (no `..`, no drive letters, no NUL).
+
+| Driver | File | What it does |
+|---|---|---|
+| `folder` | `src/lib/server/folderConnector.ts` | A folder on this computer or a network share the OS has mounted (SMB, NFS, NAS, a Windows drive letter or `\\server\share`). Every call has a timeout (a call that never returns is abandoned, not waited for) and retries with backoff for the errors that pass (EIO, ESTALE, timeouts). Files are opened with the read-only flag only. Links to folders aren't followed (no loops). A root that isn't there is "unreachable", not "empty": a scan stops and says so instead of deleting the index. |
+| `s3` | `src/lib/server/s3Connector.ts` | MinIO, AWS S3, R2 and friends via `@aws-sdk/client-s3`. Only `ListObjectsV2`, `HeadObject` and `GetObject` are ever called, so even a key that can write is never used to. Paged listing, request timeouts, SDK retries; errors mapped to catalog codes with the raw SDK text redacted. |
+
+Settings (`LOCUS_SERVER_*`) are parsed in one place, `src/lib/server/config.ts` (`loadServerConfig`); bad settings become a message on
+the Server page rather than a crash. `createConnector()` (`connector.ts`) is the one place a driver is chosen: adding SFTP or Azure Blob
+is one new file plus a case there (`docs/connectors.md`).
+
+### 9.2 From server to index
+
+```mermaid
+flowchart TD
+    A[LOCUS_SERVER_* in .env.local] --> B[createConnector: folder or s3]
+    B --> C[ConnectorSource<br/>src/lib/server/connectorSource.ts]
+    C -->|scan: list, only PDFs| D[LibraryIndexer.scanSource<br/>pipeline.ts]
+    D -->|compare size + modified time<br/>+ etag with the index| E{new or changed?}
+    E -- no --> F[nothing read, nothing downloaded]
+    E -- yes --> G[job queue in library.db]
+    G --> H[worker: open → stream to a temp file<br/>sha256, size cap, %PDF- check]
+    H --> I[extractPages: pdftotext text layer,<br/>pdfimages, smart OCR plan,<br/>tesseract eng+hin where needed]
+    I --> J[writePages: 25 pages at a time<br/>→ texts + FTS5 trigram rows]
+    J --> K[markDocumentReady: one transaction]
+    K --> L[temp file deleted]
+    D -->|files not seen in a completed scan| M[sweep: remove from the index]
+```
+
+- `ConnectorSource` (`src/lib/server/connectorSource.ts`) turns each listed PDF into a `SourceEntry`. `modifiedAt` includes the S3 version tag, so
+  a file replaced with same-size content and the same timestamp is still noticed.
+- `open()` streams the file into the library's own `tmp/` folder while hashing it, enforces the size limit and the `%PDF-` header, and returns an
+  `OpenedFile` whose `cleanup()` deletes the temp copy; the pipeline calls it in a `finally`, and the worker empties `tmp/` at start, so a
+  crash leaves nothing behind. A file whose size changed between listing and reading is still being written: it is deferred and retried, not failed.
+  A server that stops answering mid-file defers the file too (retried later) instead of marking it failed forever.
+- **Searchable early.** `extractPages` yields pages in windows of `LIBRARY_PAGE_WINDOW`; `writePages` commits them in chunks of 25, so a large file's first
+  pages are searchable (and the hit is marked "still indexing") before the file is done. `markDocumentReady` makes the whole file "ready" in one transaction.
+- **Smart OCR** (`src/lib/library/extract.ts`, the default once a server is connected; `LIBRARY_OCR_PAGES=auto|all|smart`): a page is OCR'd only if it has no
+  text layer, is mostly image, has a text layer that isn't text, has letter-spaced words, or has lettering drawn outside the layer (the same `planPage` rules as
+  uploads, section 4.2). Files over `LIBRARY_LABELS_MAX_BYTES` (20 MB) use the `auto` rules, because the check reads the whole file's word positions. Languages
+  are English and Hindi (`LIBRARY_OCR_LANG=eng+hin`). Work runs on every core (`LIBRARY_CONCURRENCY`) at a lowered priority.
+- **One transaction per file, and resume.** A file is begun as `indexing`, its pages are written, and it becomes `ready` in one transaction. A killed worker leaves
+  `indexing` documents and `running` jobs; on start `resetRunningJobs` puts the jobs back and `beginDocument` replaces the partial rows, so the result is the same as
+  an uninterrupted run (tested by killing a real process: `src/lib/server/serverSync.test.ts`). Files already `ready` and unchanged are never read again.
+- **Per-file failures** never stop the job. A corrupt, password-protected, not-a-PDF, too-large, too-slow or vanished file is recorded in the `failures` table with a
+  kind and a message (`recordFailure`), listed on the Server page, and not retried until the file changes.
+
+### 9.3 Keeping it up to date
+
+```mermaid
+flowchart LR
+    T[timer: every LOCUS_SYNC_INTERVAL_MIN] --> R
+    W[folder watcher: PDF changed, quiet 10 s] --> R
+    B[Rescan now button<br/>POST /api/server/rescan] --> R
+    R[scan the server again<br/>LibraryIndexer.reconcile] --> C[compare with the index]
+    C --> N[new / changed → read and index]
+    C --> D[gone → swept once the queue drains]
+    C --> K[unchanged → untouched]
+    C --> Z[renamed → renamed by content hash, not re-read]
+```
+
+- `reconcile()` (`pipeline.ts`) decides when each source is due: `ServedSource.rescanMinutes` is the source's own interval (the server's `LOCUS_SYNC_INTERVAL_MIN`,
+  default 10), and a rescan requested through the registry (`requestRescan`) starts at once.
+- The folder watcher (`src/lib/server/watcher.ts`, started by `scripts/library-worker.ts` for a folder server) only *asks* for a rescan after the folder has been quiet
+  for 10 s and never more than once a minute. It is a hint: network shares miss events and some systems can't watch a tree, so the timed scan always runs.
+- Deleted files are removed only after a **completed** scan whose queue has drained (`sweepOne`), so a scan that failed halfway (the server went away) never deletes
+  anything. Directories that couldn't be read in a scan are excluded from the sweep.
+- A file changed in the last `LIBRARY_SETTLE_SECONDS` (120) is held until it has settled, so a PDF still being copied is never read half-written.
+- "Last synced" on the Server page is the end of the last *completed* scan (`scans` table); a failed scan records its reason on the source (`sources.last_error`),
+  shown as a banner with its catalog code, and cleared by the next scan that completes.
+
+### 9.4 The Server page, and the connector being down
+
+`GET /api/server` (`src/app/api/server/route.ts`, admin only) returns `buildServerStatus()` (`src/lib/server/status.ts`), built from the library database read-only
+plus the worker's own status line, so it works whatever the storage server is doing: connection settings (never secrets), files done / total, pages and scanned
+pages read, files per minute and an ETA, last synced, the sync error, disk numbers, and the list of files that couldn't be read. `POST /api/server/test`
+runs `connector.test()` (a read-only look); `POST /api/server/rescan` requests a rescan. The browser never receives a secret: the S3 key and secret exist only
+in the server process's environment and are redacted from every message (`src/lib/errors/redact.ts`).
+
+Search never depends on the server being up: it reads only the local index. When the server, the disk or a tool has a problem, `ServerBanner`
+(`src/components/ServerBanner.tsx`) shows one slim notice to the administrator and search carries on.
+
+### 9.5 Opening the original PDF
+
+A result's "Open PDF" link points at `/api/library/file?doc=<id>#page=<n>` (`src/app/api/library/file/route.ts`); for uploads, `/api/uploads/file?conversationId=<id>&docId=<id>`.
+The route checks who is asking (admin: any document; an ordinary account with `LOCUS_USER_SOURCES`: only documents of folders it owns; an upload: only the session's owner),
+looks the file up **in the index** (the path comes from the database, never from the request), and streams it from the connector (`src/lib/server/originals.ts`), with
+`Range` support for large files and `Cache-Control: private, no-store`. A document that doesn't exist and one that isn't yours get the same answer, so ids can't be probed. The
+browser is never given a server address, a presigned link or a path. The `#page=` fragment is handled by the browser's own PDF viewer.
+
+### 9.6 Disk space
+
+```mermaid
+flowchart TD
+    A[first scan of a server] --> B{estimate known for this server<br/>and it fitted?}
+    B -- yes --> G[index]
+    B -- no --> C[sizes-only listing pass<br/>measureServer in preflight.ts]
+    C --> D[estimate = PDF bytes × ratio × 1.25<br/>ratio 0.65, or the ratio seen so far]
+    D --> E{estimate - what the index already uses<br/>fits in free space - LOCUS_MIN_FREE_GB?}
+    E -- no --> F[do not start: LOCUS-DISK-001<br/>needs X, free Y, what to do]
+    E -- yes --> G
+    G --> H[before every write batch and every 30 s:<br/>DataDirGuard.checkLimits]
+    H -- low space or SQLITE_FULL --> I[pause: LOCUS-DISK-002<br/>everything indexed stays searchable]
+    I -->|space freed| G
+```
+
+- **Before indexing** (`src/lib/library/sources/build.ts` → `buildServer`, `src/lib/server/preflight.ts`): the first scan of a server (or any scan after the last check said it
+  wouldn't fit) starts with a sizes-only pass and refuses to begin if the index wouldn't fit (`LOCUS-DISK-001`, with the numbers and what to do). The estimate is the server's
+  PDF bytes × `DEFAULT_INDEX_RATIO` × 1.25. What the index really costs is about 18 KB a page (measured, `docs/server-benchmark.md`); the ratio assumes a dense 30 KB per page. Once 20 files
+  are indexed the ratio actually seen (`observedRatio`) replaces the default, which is what the Server page shows ("judged from what is built so far").
+- **While running** (`DataDirGuard.checkLimits`, `src/lib/library/storage/guard.ts`, `limits.ts`): free space and the cap are checked before every write batch and every 30 s;
+  below the reserve (`LOCUS_MIN_FREE_GB`, 5 GB) the worker pauses (`onLimit`), keeps everything already indexed searchable, repeats the message, and resumes by itself when room appears. A
+  `SQLITE_FULL` error takes the same path, and SQLite's transactions mean a full disk never leaves a half-written file.
+- **Uploads** (`src/lib/uploads/space.ts`): refused before anything is written unless the disk keeps its reserve after twice the file; the per-account limit (20 GB) and the total cap (half the disk) apply as well.
+- The disk helpers (`src/lib/server/disk.ts`) use `fs.statfs`, so the same code runs on macOS, Windows and Linux. The check that the index folder is on a suitable volume (`src/lib/library/storage/volume.ts`) uses
+  `diskutil` on a Mac and, elsewhere, `/proc/mounts` (Linux) or the UNC form of the path (Windows) to refuse a network filesystem, where SQLite's locking isn't safe.
+
+### 9.7 Errors
+
+All user-facing problems come from one catalog (`src/lib/errors/catalog.ts`, listed in `docs/errors.md`): a code (`LOCUS-DISK-001`), a title, a plain message and what to do. The app shows them
+as `/problem/<code>` pages, the not-found page, `error.tsx` (with "Try again"), `global-error.tsx` and banners; APIs answer `{ code, message, action }`, never a stack trace; the server log gets the
+full detail with secrets redacted (`logError`). Pages and the catalog need nothing from the database, so they render when the index or the server is down.
+
+### 9.8 Other sources, safety limits, who may search
+
+- Folders added on the Sources page are read in place, only under `LOCUS_ALLOWED_ROOTS`; databases and public Google Drive folders work as before (`docs/sources.md`).
+- The library may write at most `LOCUS_LIBRARY_MAX_GB` (100) and never fills the disk below `LOCUS_MIN_FREE_GB` (5 GB with a server connected; 20 GB for the original always-on library). At a limit indexing pauses; nothing is deleted.
+- `POST /api/library/search`: the administrator searches everything; with `LOCUS_USER_SOURCES=true` ordinary accounts add and search only their own folders.
 
 ---
 
@@ -333,11 +474,11 @@ Accounts mode is on when `LOCUS_USERS_ENABLED=true` (`src/lib/users/mode.ts`).
 
 - **Users:** rows in `users`. A passcode is stored only as an **scrypt** hash (N=16384, r=8, p=1, 16-byte salt), compared in constant time (`src/lib/records/passcodes.ts`). A wrong username and a wrong passcode take the same time.
 - **Sign-up:** `LOCUS_SIGNUP` = `code` (needs the sign-up code), `open`, or `off`. The code is `LOCUS_SIGNUP_CODE`, else the old shared `LOCUS_PASSCODE`.
-- **Admin:** one `admin` account whose passcode is `LOCUS_ADMIN_PASSCODE` from `.env.local` (hashed into the table; changing it signs the admin out).
+- **Admin:** one `admin` account. Its password is `LOCUS_ADMIN_PASSCODE_HASH` (a scrypt hash that `npm run setup` writes, so the password itself is never stored) or, if you prefer, `LOCUS_ADMIN_PASSCODE` in plain text; the hash is kept in the table and changing either signs the admin out (`ensureAdminUser`, `adminLoginOk` in `src/lib/records/users.ts`).
 - **Login:** `POST /api/login` (`src/app/api/login/route.ts`) checks the passcode, rate-limited to 5 failures per 5 minutes per IP (`isRateLimited`, in memory), and sets the cookie `locus_session`.
 - **Session cookie:** a token `base64url(payload).HMAC-SHA256(payload)` signed with `SESSION_SECRET`, holding expiry, user id, role and a token version (`src/lib/auth.ts`). It is built on Web Crypto so the same code runs in the Edge `proxy.ts` and the Node routes. `httpOnly`; lasts `SESSION_TTL_HOURS` (default 7 days). The user is looked up on every request (`currentUser()`, `src/lib/session.ts`); disabling the account or resetting its passcode bumps `token_version`, which signs the person out everywhere.
-- **Admin-only areas:** `/sources`, `/users`, `/activity`, `/search`, `/api/sources`, `/api/users`, `/api/activity`, `/api/search`, `/api/library` (`ADMIN_PREFIXES` in `src/proxy.ts`). This is a first check on the signed token; each route then checks again with `requireAdmin()` (`src/lib/session.ts`), which also refuses cross-site requests and non-JSON bodies. With `LOCUS_USER_SOURCES=true`, the Sources paths open to ordinary accounts, limited to their own folders.
-- **Admin pages:** Users (create, disable, reset passcode, remove with their files), Activity (searches, uploads, denied access; export), Sources.
+- **Admin-only areas:** `/server`, `/sources`, `/users`, `/activity`, `/search`, `/api/server`, `/api/sources`, `/api/users`, `/api/activity`, `/api/search`, `/api/library` (`ADMIN_PREFIXES` in `src/proxy.ts`). This is a first check on the signed token; each route then checks again with `requireAdmin()` (`src/lib/session.ts`), which also refuses cross-site requests and non-JSON bodies. With `LOCUS_USER_SOURCES=true`, the Sources paths open to ordinary accounts, limited to their own folders.
+- **Admin pages:** Server (the storage server: connection, progress, sync, disk, failures), Users (create, disable, reset passcode, remove with their files), Activity (searches, uploads, opened PDFs, denied access; export), Sources.
 
 With accounts mode off, Locus is a single-shared-passcode app (`LOCUS_PASSCODE`).
 
@@ -412,97 +553,86 @@ flowchart TD
 .
 ├── src/
 │   ├── app/                  Next.js pages and API routes
-│   │   ├── api/uploads/      receive a PDF, stream progress, list, delete
+│   │   ├── api/server/       Server page: status, test connection, rescan (admin)
+│   │   ├── api/library/      library search and status; file/ streams an original PDF after the privacy check
+│   │   ├── api/uploads/      receive a PDF, stream progress, list, delete; file/ opens your own upload
 │   │   ├── api/folders/      plan a folder pick (what to send, limits)
 │   │   ├── api/session-search/   the search a user runs over their own files
 │   │   ├── api/search/       admin-only search of the standalone tender index
-│   │   ├── api/library/      library (Sources) search and status
 │   │   ├── api/sources/      add / test / remove sources (admin; own folders if enabled)
-│   │   ├── api/users/        admin: accounts
-│   │   ├── api/activity/     admin: activity log, summary, export
+│   │   ├── api/users/, activity/   admin: accounts, activity log
 │   │   ├── api/login, logout, signup, account/   sign-in and passcodes
 │   │   ├── api/chat, title/  optional model chat (403 while chat is off)
-│   │   └── login, search, sources, users, activity, account/   pages
-│   ├── components/           React UI (Chat, FolderPicker, SearchResultCard, admin/, sources/ ...)
+│   │   ├── server/, sources/, users/, activity/, login/, search/   pages
+│   │   ├── problem/[code]/   a catalog error as a page; with not-found.tsx, error.tsx, global-error.tsx
+│   │   └── manifest.ts, icon.png, apple-icon.png, favicon.ico   installable web app + icons
+│   ├── components/           React UI (Chat, FolderPicker, SearchResultCard, ErrorPage, ServerBanner, admin/, sources/ ...)
 │   ├── config/features.ts    the chat on/off switch
 │   ├── proxy.ts              gate for every page/API: session cookie and admin paths
 │   └── lib/
-│       ├── uploads/          config, validation, storage on disk, the upload pipeline
-│       ├── search/           index schema, normalisation, query, snippets
+│       ├── server/           the storage server: connector types, config, folder + S3 drivers, ConnectorSource,
+│       │                     preflight (disk estimate), status, watcher, originals, disk helpers, tool checks
+│       ├── errors/           the error catalog, redaction of secrets, generated docs
+│       ├── library/          the indexer: worker, pipeline, extract (smart OCR), sources/, storage guards, query
+│       ├── uploads/          config, validation, storage on disk, free-disk check, the upload pipeline
+│       ├── search/           session index schema, normalisation, query, snippets
 │       ├── records/          users, ownership, uploads record, activity (records.db)
-│       ├── library/          Sources: worker, pipeline, sources/ (folder, drive, database), storage guards
 │       ├── users/            accounts-mode settings and sign-in
 │       ├── chat/             document-search glue and reasoning helpers for chat
 │       ├── auth.ts, session.ts   cookie signing; who is calling; owner checks
 │       └── lmStudioClient.ts     the OpenAI-compatible client for the local model
 ├── scripts/
+│   ├── setup.ts, doctor.ts, start.ts   npm run setup / doctor / start
+│   ├── library-worker.ts     the always-on indexer (started by npm start)
 │   ├── indexer/              PDF reading: pdf.ts (poppler/tesseract calls), classify.ts (OCR decisions),
-│   │                         extract.ts, store.ts (writes the index), ocrCache.ts, config.ts
-│   ├── share.ts              npm run share: build, serve, tunnel, Vercel redirect, health check
-│   ├── library-worker.ts     the always-on library indexer
-│   ├── index-tenders.ts      one-off indexing of a folder of PDFs (standalone index)
-│   └── e2e-*.mjs, bench-*.ts, verify-*.ts   end-to-end checks and measurements
-├── redirect/                 the tiny Vercel redirect app (separate package)
-├── docs/                     design notes and measurements (this file; faster-uploads, library, sources, sharing)
+│   │                         extract.ts, store.ts (writes the session index), ocrCache.ts, config.ts
+│   ├── gen-test-pdfs.ts, bench-server.ts, e2e-server.mjs   generated test PDFs, benchmark, end-to-end check
+│   ├── share.ts              npm run share: build, serve, tunnel, Vercel redirect (optional)
+│   └── e2e-*.mjs, bench-*.ts, verify-*.ts   other end-to-end checks and measurements
+├── Dockerfile, docker-compose.yml, .dockerignore   the container setup (poppler + tesseract eng+hin, read-only server mount, MinIO test profile)
+├── redirect/                 the tiny Vercel redirect app for `npm run share` (separate package)
+├── docs/                     this file, errors.md, connectors.md, server-benchmark.md, reference.md, design notes
 ├── data/                     runtime data, git-ignored (never in the source zip):
 │   ├── uploads/              <sha256>.pdf, every uploaded file
-│   ├── index/                search.db, ocr-cache.db
+│   ├── index/                search.db, ocr-cache.db (session index)
 │   ├── app/                  records.db (accounts, ownership, activity)
-│   └── locus-data/           library index, sources registry, library OCR cache
+│   └── locus-data/           the library index of the storage server, sources registry, OCR cache
 └── .env.local                your settings and secrets, git-ignored (see .env.example)
 ```
 
 ---
 
-## 13. Running it locally
+## 13. Running it
 
 ### Requirements
 
-- **Node.js 22** (developed on 22.x) and npm.
-- **poppler** (`pdfinfo`, `pdftotext`, `pdftoppm`, `pdfimages`) and **tesseract** with the English and Hindi language data (`eng`, `hin`), on the `PATH`.
-  macOS: `brew install poppler tesseract tesseract-lang`
-- **cloudflared**, only to share over a tunnel: `brew install cloudflared`
-- **LM Studio** with a Qwen3 4B model loaded, only if you turn chat on.
+- **Node.js 22** (`.nvmrc`, `engines`). `better-sqlite3` installs a prebuilt binary for macOS (arm64 and x64), Windows x64 and Linux.
+- **poppler** (`pdfinfo`, `pdftotext`, `pdftoppm`, `pdfimages`) and **tesseract** with English and Hindi data, on the `PATH`. Without tesseract Locus still runs: PDFs with a
+  text layer work and scanned pages are skipped, with a notice (`LOCUS-TOOL-001`).
+- `npm run doctor` (`scripts/doctor.ts`) checks all of this, free disk, write access to the index folder and the server connection, and prints the exact install command for macOS (brew), Windows (winget/choco) and Ubuntu (apt).
 
 ### Steps
 
 ```bash
-npm install
-cp .env.example .env.local     # then fill in the values
-npm run dev                    # development server on http://localhost:3000
+npm ci
+npm run setup      # scripts/setup.ts: .env.local, SESSION_SECRET, admin password (as a hash), server, index folder
+npm run doctor
+npm run build
+npm start          # scripts/start.ts: the web app + the indexer, on http://localhost:3000
 ```
 
-To serve it publicly through the tunnel and the Vercel redirect: `npm run share`
-(if your network blocks QUIC: `TUNNEL_TRANSPORT_PROTOCOL=http2 npm run share`).
-Tests: `npm test`. End-to-end checks: `npm run e2e`.
+`npm run dev` is for working on the code. Docker: `docker compose up -d --build` (see the README). The tunnel and Vercel link (`npm run share`) are optional (section 2).
 
-### `.env.local` keys (names only)
+### `.env.local` keys
 
-Copy `.env.example` for the full list with placeholders. What each does:
+`.env.example` lists every key with a one-line comment; `npm run setup` fills in the ones that matter. By group:
 
-| Key | What it does |
+| Group | Keys |
 |---|---|
-| `LOCUS_PASSCODE` | Shared passcode when accounts mode is off; also the default sign-up code. |
-| `SESSION_SECRET` | Signs the login cookie and derives folder session ids. Required in production; `npm run share` generates one if missing. |
-| `LOCUS_USERS_ENABLED` | `true` turns on named accounts. |
-| `LOCUS_ADMIN_PASSCODE` | The admin account's passcode (admin area exists only when this is set in accounts mode). |
-| `LOCUS_SIGNUP` | `code`, `open` or `off`: who may create an account. |
-| `LOCUS_SIGNUP_CODE` | The sign-up code (optional; defaults to `LOCUS_PASSCODE`). |
-| `LOCUS_USER_UPLOAD_MB` | Upload limit per account, in MB. |
-| `STORAGE_CAP_BYTES` | Total cap on uploads + index, in bytes. |
-| `LOCUS_LIBRARY_ENABLED` | `true` turns on the library / Sources feature. |
-| `LOCUS_SECRETS_KEY` | Encrypts saved database passwords for Sources. Keep it with your backups; `npm run share` generates one when needed. |
-| `LOCUS_USER_SOURCES` | `true` lets ordinary accounts add their own folders. |
-| `LOCUS_USER_DATABASES` | `true` also lets them add a database (testing switch). |
-| `LOCUS_ALLOWED_ROOTS` | Extra absolute folders the library may read (default `/Volumes`). |
-| `LOCUS_CHAT_ENABLED` | `true` turns on model chat (off by default). |
-| `LM_STUDIO_BASE_URL`, `LM_STUDIO_MODEL` | Where the local model is and which one. Only used with chat on. |
-
-Further optional settings read by the code (all have defaults): `UPLOADS_DIR`, `SEARCH_INDEX_PATH`,
-`OCR_CACHE_PATH`, `LOCUS_APP_DIR`, `LOCUS_APP_DB_PATH`, `LOCUS_DATA_DIR`, `OCR_PAGES`, `OCR_LANG`,
-`OCR_LANG_FALLBACK`, `OCR_DPI`, `OCR_CONCURRENCY`, `OCR_NICE`, `MAX_UPLOAD_FILE_BYTES`,
-`MAX_FILES_PER_CONVERSATION`, `MAX_FOLDER_FILES`, `LOCUS_UPLOAD_PARALLEL`, `LOCUS_RETENTION_DAYS`,
-`LOCUS_LOG_QUERY_TEXT`, `LOCUS_ACTIVITY_RETENTION_DAYS`, `SESSION_TTL_HOURS`, `LOCUS_MIN_FREE_GB`,
-`LOCUS_LIBRARY_MAX_GB`, `SHARE_HEALTH_INTERVAL_SECONDS`, `TUNNEL_TRANSPORT_PROTOCOL`.
+| Sign-in | `SESSION_SECRET`, `LOCUS_USERS_ENABLED`, `LOCUS_ADMIN_PASSCODE_HASH` (or `LOCUS_ADMIN_PASSCODE`), `LOCUS_SIGNUP`, `LOCUS_SIGNUP_CODE`, `LOCUS_PASSCODE` |
+| Storage server | `LOCUS_SERVER_TYPE`, `LOCUS_SERVER_PATH`, `LOCUS_SERVER_S3_ENDPOINT`, `_REGION`, `_BUCKET`, `_PREFIX`, `_ACCESS_KEY`, `_SECRET_KEY`, `_FORCE_PATH_STYLE`, `LOCUS_SYNC_INTERVAL_MIN`, `LOCUS_SERVER_WATCH`, `LOCUS_LIBRARY_ENABLED` |
+| Space | `LOCUS_DATA_DIR`, `LOCUS_MIN_FREE_GB`, `LOCUS_USER_UPLOAD_MB`, `STORAGE_CAP_BYTES`, `UPLOADS_DIR`, `SEARCH_INDEX_PATH`, `LOCUS_APP_DIR` |
+| Reading PDFs | `LIBRARY_OCR_PAGES`, `LIBRARY_OCR_LANG`, `LIBRARY_FILES_IN_FLIGHT`, `LIBRARY_CONCURRENCY`, `LIBRARY_MAX_FILE_BYTES`, `LIBRARY_SETTLE_SECONDS` |
+| Chat (off) | `LOCUS_CHAT_ENABLED`, `LM_STUDIO_BASE_URL`, `LM_STUDIO_MODEL` |
 
 Never commit `.env.local`; `.gitignore` excludes it.
