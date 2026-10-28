@@ -79,7 +79,7 @@ phrases. On 400 phrases of 1-4 real words, in exact and loose modes: 66,615 hits
   (columns, table cells, a signature block): OCR reads a page line by line, the layer reads it in the order
   the PDF stores it. `signatory with`, `for thickness`, `annealing for`, `table for heat treatments`.
   This is the one real limitation of trusting a text layer; it is the same in the library.
-- **OCR misreads, 26 pages.** The old index "found" words OCR got wrong: `Not applicable` read as
+- **OCR misreads, 30 pages.** The old index "found" words OCR got wrong: `Not applicable` read as
   `Applicable/ Net` (so `net` matched), `necessary` read as `newessany` (so `any` matched), and a dotted line
   read as a run of letters (so `case` matched inside it).
 - **A different English-only reading, 2 pages.** A page OCR'd in both settings, read slightly differently
