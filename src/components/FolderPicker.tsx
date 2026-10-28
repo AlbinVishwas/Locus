@@ -13,7 +13,15 @@ import { uploadFile, type UploadStageEvent } from "@/lib/uploadsClient";
  * files still need sending and /api/uploads does the work.
  */
 
-const UPLOAD_CONCURRENCY = 3;
+/** How many files to send at once when the server doesn't say (it does: LOCUS_UPLOAD_PARALLEL). */
+const DEFAULT_PARALLEL = 4;
+/** Resends of a file after a dropped connection or a temporary error from a proxy; the server recognises a file it already has. */
+const UPLOAD_RETRIES = 3;
+/**
+ * Once every file is searchable, wait this long for the scanned pages to finish before announcing the folder:
+ * a small folder then arrives complete, while a big one doesn't keep the person waiting and says what's left.
+ */
+const PARTIAL_GRACE_MS = 8000;
 
 export interface FolderPickState {
   busy: boolean;
@@ -27,16 +35,21 @@ export interface FolderPickState {
   current: string[];
   /** Files that couldn't be read, with the reason. */
   failures: string[];
+  /** Scanned pages still being read after the files became searchable (the "improving" phase), if any. */
+  improving: { pagesDone: number; pagesTotal: number } | null;
 }
 
-const IDLE: FolderPickState = { busy: false, message: null, error: null, progress: null, current: [], failures: [] };
+const IDLE: FolderPickState = { busy: false, message: null, error: null, progress: null, current: [], failures: [], improving: null };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${Math.round(bytes / (1024 * 1024))} MB`);
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 function stageLabel(e: UploadStageEvent): string {
   if (e.type === "ready") return "Ready";
   if (e.type === "error") return "Failed";
+  if (e.type === "searchable") return `Searchable now · improving ${plural(e.ocrPages, "scanned page")}`;
   if (e.stage === "running-ocr") return `Scanning page ${e.page} of ${e.totalPages}`;
   return e.stage === "uploading" ? "Uploading" : e.stage === "reading" ? "Reading" : "Indexing";
 }
@@ -44,9 +57,13 @@ function stageLabel(e: UploadStageEvent): string {
 export function useFolderPick() {
   const [state, setState] = useState<FolderPickState>(IDLE);
   const busyRef = useRef(false);
+  // Changes with every pick and every clear, so work still finishing in the background for an
+  // earlier pick can tell it is no longer the current one and leave the display alone.
+  const runRef = useRef(0);
   const patch = useCallback((p: Partial<FolderPickState>) => setState((s) => ({ ...s, ...p })), []);
 
   const clear = useCallback(() => {
+    runRef.current++;
     setFolderScope(null);
     setState(IDLE);
   }, []);
@@ -57,6 +74,7 @@ export function useFolderPick() {
       const picked = readPick(list);
       if (!picked) return;
       busyRef.current = true;
+      const run = ++runRef.current;
       setState({ ...IDLE, busy: true });
       const fail = (error: string) => {
         busyRef.current = false;
@@ -95,52 +113,108 @@ export function useFolderPick() {
         let done = 0;
         let uploaded = 0;
         const inFlight = new Map<string, string>();
+        // Files whose text is searchable but whose scanned pages are still being read: path -> pages done / total.
+        const improving = new Map<string, { done: number; total: number }>();
+        const pages = () => {
+          let pagesDone = 0;
+          let pagesTotal = 0;
+          for (const v of improving.values()) {
+            pagesDone += v.done;
+            pagesTotal += v.total;
+          }
+          return { pagesDone, pagesTotal };
+        };
         const show = () => patch({ progress: { done, total: queue.length }, current: [...inFlight.values()] });
         patch({ message: `${found}. ${plural(plan.present, "file")} already indexed, ${plural(queue.length, "file")} to upload.`, progress: { done: 0, total: queue.length } });
 
+        const finishing: Promise<void>[] = [];
         const next = [...queue];
         const worker = async () => {
           for (let item = next.shift(); item; item = next.shift()) {
             const { path, file } = item;
-            let last: UploadStageEvent | null = null;
             inFlight.set(path, `${path} — Uploading`);
             show();
-            await uploadFile(
-              plan.conversationId,
-              file,
-              (e) => {
-                last = e;
-                inFlight.set(path, `${path} — ${stageLabel(e)}`);
-                show();
-              },
-              undefined,
-              path
-            ).catch((err) => {
-              last = { type: "error", message: err instanceof Error ? err.message : "Upload failed" };
-            });
-            inFlight.delete(path);
-            done++;
-            const final = last as UploadStageEvent | null;
-            if (final?.type === "ready") uploaded++;
-            else failures.push(`${path} — ${final?.type === "error" ? final.message : "the upload was interrupted"}`);
-            show();
+            let release: () => void = () => {};
+            const slot = new Promise<void>((resolve) => (release = resolve));
+            let counted = false;
+            // A file is handled once it is searchable (or failed); its scanned pages carry on in the
+            // background, and the next file doesn't wait for them.
+            const count = (ok: boolean, why?: string) => {
+              if (counted) return;
+              counted = true;
+              done++;
+              if (ok) uploaded++;
+              else failures.push(`${path} — ${why ?? "the upload was interrupted"}`);
+              release();
+            };
+            finishing.push(
+              uploadFile(
+                plan.conversationId,
+                file,
+                (e) => {
+                  inFlight.set(path, `${path} — ${stageLabel(e)}`);
+                  if (e.type === "searchable") improving.set(path, { done: 0, total: e.ocrPages });
+                  else if (e.type === "stage" && e.stage === "running-ocr") improving.set(path, { done: e.page, total: e.totalPages });
+                  if (e.type === "searchable" || e.type === "ready") count(true);
+                  else if (e.type === "error") count(false, e.message);
+                  show();
+                  if (runRef.current === run && !busyRef.current) showImproving();
+                },
+                undefined,
+                path,
+                UPLOAD_RETRIES
+              )
+                .catch((err) => count(false, err instanceof Error ? err.message : "Upload failed"))
+                .finally(() => {
+                  count(false);
+                  improving.delete(path);
+                  inFlight.delete(path);
+                  show();
+                  if (runRef.current === run && !busyRef.current) showImproving();
+                })
+            );
+            await slot;
           }
         };
-        await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, next.length) }, worker));
+
+        // After the scope is set: what is still being read, then "Ready" once it is all done.
+        let readyMessage = "";
+        const showImproving = () => {
+          const { pagesDone, pagesTotal } = pages();
+          if (improving.size === 0) {
+            patch({ message: readyMessage, improving: null, current: [], progress: queue.length > 0 ? { done: queue.length, total: queue.length } : null });
+          } else {
+            patch({
+              message: `Searchable now · improving ${plural(pagesTotal - pagesDone, "scanned page")}. ${readyMessage.replace(/^Ready — /, "")}`,
+              improving: { pagesDone, pagesTotal },
+              current: [],
+              progress: null,
+            });
+          }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(limits.uploadParallel ?? DEFAULT_PARALLEL, next.length) }, worker));
 
         const files = plan.present + uploaded;
         if (files === 0) {
+          await Promise.allSettled(finishing);
           return fail(`None of the PDFs in “${name}” could be read. ${failures[0] ?? ""}`.trim());
         }
+
+        // Every file is searchable. A short wait lets a small folder's scanned pages finish first.
+        if (improving.size > 0) {
+          const { pagesTotal, pagesDone } = pages();
+          patch({ message: `${plural(files, "file")} searchable. Reading ${plural(pagesTotal - pagesDone, "scanned page")}…` });
+          await Promise.race([Promise.allSettled(finishing), sleep(PARTIAL_GRACE_MS)]);
+        }
+        if (runRef.current !== run) return;
+
+        readyMessage = `Ready — ${plural(files, "file")} (${uploaded} uploaded, ${plan.present} already indexed${plan.removed > 0 ? `, ${plural(plan.removed, "old file")} removed` : ""}).`;
         const scope: FolderScope = { name, files, conversationId: plan.conversationId };
         setFolderScope(scope);
         busyRef.current = false;
-        setState({
-          ...IDLE,
-          message: `Ready — ${plural(files, "file")} (${uploaded} uploaded, ${plan.present} already indexed${plan.removed > 0 ? `, ${plural(plan.removed, "old file")} removed` : ""}).`,
-          progress: queue.length > 0 ? { done: queue.length, total: queue.length } : null,
-          failures,
-        });
+        setState({ ...IDLE, message: readyMessage, progress: queue.length > 0 ? { done: queue.length, total: queue.length } : null, failures });
+        showImproving();
       } catch (err) {
         fail(err instanceof Error && err.message ? err.message : "Couldn't read that folder.");
       }
@@ -222,6 +296,11 @@ export function FolderStatus({ folder, active }: { folder: FolderPick; active: F
             {pct !== null && state.busy && (
               <div className="mx-auto mt-1.5 h-1 w-full max-w-[320px] overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Folder upload progress">
                 <div className="h-full bg-accent transition-[width]" style={{ width: `${pct}%` }} />
+              </div>
+            )}
+            {state.improving && state.improving.pagesTotal > 0 && (
+              <div className="mx-auto mt-1.5 h-1 w-full max-w-[320px] overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={Math.round((state.improving.pagesDone / state.improving.pagesTotal) * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Scanned pages being read">
+                <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round((state.improving.pagesDone / state.improving.pagesTotal) * 100)}%` }} />
               </div>
             )}
             {state.progress && state.busy && state.progress.total > 0 && (

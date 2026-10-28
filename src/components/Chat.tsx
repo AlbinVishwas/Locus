@@ -25,6 +25,8 @@ import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 80;
+/** Files sent at once through the attach button; the rest wait their turn. */
+const ATTACH_PARALLEL = 4;
 
 interface ChatProps {
   conversation: Conversation;
@@ -79,6 +81,16 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
     refreshFiles();
   }, [refreshFiles]);
 
+  // At most a few files go up at once; the rest wait their turn, so a big selection doesn't flood the connection.
+  const attachQueue = useRef<Array<() => void>>([]);
+  const attachActive = useRef(0);
+  const pumpAttach = useCallback(() => {
+    while (attachActive.current < ATTACH_PARALLEL && attachQueue.current.length > 0) {
+      attachActive.current++;
+      attachQueue.current.shift()?.();
+    }
+  }, []);
+
   const handleAttachFiles = useCallback(
     (toUpload: File[]) => {
       for (const file of toUpload) {
@@ -88,48 +100,75 @@ export default function Chat({ conversation, onMessagesChange }: ChatProps) {
           { tempId, name: file.name, stage: { type: "stage", stage: "uploading" } },
         ]);
 
-        let finished = false;
-        uploadFile(conversation.id, file, (event) => {
-          setUploading((prev) => prev.map((u) => (u.tempId === tempId ? { ...u, stage: event } : u)));
-          if (event.type === "ready" || event.type === "error") finished = true;
-          if (event.type === "ready") {
+        attachQueue.current.push(() => {
+          let finished = false;
+          let searchable = false;
+          let slotFreed = false;
+          const freeSlot = () => {
+            if (slotFreed) return;
+            slotFreed = true;
+            attachActive.current--;
+            pumpAttach();
+          };
+          uploadFile(conversation.id, file, (event) => {
+            setUploading((prev) =>
+              prev.map((u) => (u.tempId === tempId ? { ...u, stage: event, docId: event.type === "searchable" ? event.docId : u.docId } : u))
+            );
+            // The text is searchable now: the next file may start while this one's scanned pages are read.
+            if (event.type === "searchable") {
+              searchable = true;
+              refreshFiles();
+              freeSlot();
+            }
+            if (event.type === "ready" || event.type === "error") finished = true;
+            if (event.type === "ready" || event.type === "error") freeSlot();
+            if (event.type === "ready") {
+              refreshFiles();
+              setUploading((prev) => prev.filter((u) => u.tempId !== tempId));
+            }
+            // An error stays visible in the chip (stageLabel shows its
+            // message) rather than disappearing silently; the next attach
+            // or a conversation switch is what clears it.
+          }).then(() => {
+            freeSlot();
+            // The stream ended without ready or error: the connection dropped
+            // mid-processing. The server keeps indexing, so don't leave the chip
+            // claiming it's still uploading forever.
+            if (finished) return;
             refreshFiles();
-            setUploading((prev) => prev.filter((u) => u.tempId !== tempId));
-          }
-          // An error stays visible in the chip (stageLabel shows its
-          // message) rather than disappearing silently; the next attach
-          // or a conversation switch is what clears it.
-        }).then(() => {
-          // The stream ended without ready or error: the connection dropped
-          // mid-processing. The server keeps indexing, so don't leave the chip
-          // claiming it's still uploading forever.
-          if (finished) return;
-          refreshFiles();
-          setUploading((prev) =>
-            prev.map((u) =>
-              u.tempId === tempId
-                ? {
-                    ...u,
-                    stage: {
-                      type: "error",
-                      message: "Connection lost while processing. It may still finish -- reload in a minute to check.",
-                    },
-                  }
-                : u
-            )
-          );
-        }).catch(() => {
-          setUploading((prev) =>
-            prev.map((u) =>
-              u.tempId === tempId
-                ? { ...u, stage: { type: "error", message: "Upload failed" } }
-                : u
-            )
-          );
+            if (searchable) {
+              // Searchable, then the connection dropped: its scanned pages finish on the server, and the file chip says so.
+              setUploading((prev) => prev.filter((u) => u.tempId !== tempId));
+              return;
+            }
+            setUploading((prev) =>
+              prev.map((u) =>
+                u.tempId === tempId
+                  ? {
+                      ...u,
+                      stage: {
+                        type: "error",
+                        message: "Connection lost while processing. It may still finish -- reload in a minute to check.",
+                      },
+                    }
+                  : u
+              )
+            );
+          }).catch(() => {
+            freeSlot();
+            setUploading((prev) =>
+              prev.map((u) =>
+                u.tempId === tempId
+                  ? { ...u, stage: { type: "error", message: "Upload failed" } }
+                  : u
+              )
+            );
+          });
         });
       }
+      pumpAttach();
     },
-    [conversation.id, refreshFiles]
+    [conversation.id, refreshFiles, pumpAttach]
   );
 
   // The per-file remove button, after the user confirms in AttachmentList.

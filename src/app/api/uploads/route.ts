@@ -86,6 +86,24 @@ export async function POST(req: Request) {
   // A picked folder is its own session (see /api/folders) with its own, larger file limit.
   const isFolder = (conversationId as string).startsWith(FOLDER_ID_PREFIX);
   const existing = uploadedDocuments(getWritableDb(), conversationId as string);
+
+  // A file of a picked folder is identified by its path and content, so sending it again (the browser retrying
+  // after a dropped connection, say) answers with the one already there instead of adding a second copy.
+  const pickedPath = formData.get("path");
+  if (isFolder && typeof pickedPath === "string" && pickedPath) {
+    const name = sanitizeOriginalFilename(pickedPath);
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    const same = existing.find((d) => d.originalFilename === name && d.sha256 === sha);
+    if (same?.status === "failed") {
+      await deleteSingleUpload(conversationId as string, same.id);
+    } else if (same) {
+      const events = [{ type: "stage", stage: "uploading" }, ...sameFileEvents(same, getWritableDb())];
+      return new Response(events.map((e) => `${(e as { type: string }).type === "searchable" ? "event: searchable\n" : ""}data: ${JSON.stringify(e)}\n\n`).join(""), {
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform" },
+      });
+    }
+  }
+
   if (existing.length >= (isFolder ? maxFolderFiles() : maxFilesPerConversation())) {
     return new Response(
       isFolder
@@ -106,7 +124,6 @@ export async function POST(req: Request) {
   }
 
   // A picked folder's files are named by their path inside the folder, so results show where each one sits.
-  const pickedPath = formData.get("path");
   const originalFilename = sanitizeOriginalFilename(isFolder && typeof pickedPath === "string" && pickedPath ? pickedPath : file.name || "document.pdf");
   const encoder = new TextEncoder();
 
@@ -165,6 +182,10 @@ export async function POST(req: Request) {
       const onStage = (event: UploadStage) => {
         if (event.stage === "reading" || event.stage === "indexing") {
           send({ type: "stage", stage: event.stage });
+        } else if (event.stage === "searchable") {
+          // A named SSE event: browsers' default listeners (and anything reading only plain `data:` events, as
+          // before) skip it, while this app's own client reads it to show "Searchable now".
+          write(`event: searchable\ndata: ${JSON.stringify({ type: "searchable", docId: event.docId, pageCount: event.pageCount, ocrPages: event.ocrPages })}\n\n`);
         } else if (event.stage === "running-ocr") {
           send({ type: "stage", stage: "running-ocr", page: event.page, totalPages: event.totalPages });
         } else if (event.stage === "ready") {
@@ -260,6 +281,13 @@ export async function DELETE(req: Request) {
     logActivity(db, activityFor(req, user, { kind: "session_deleted" }));
   }
   return Response.json({ ok: true });
+}
+
+/** The events that tell the browser where a file already in the index stands: ready, or searchable with OCR still going. */
+function sameFileEvents(doc: { id: number; pageCount: number; status: string }, db: ReturnType<typeof getWritableDb>): object[] {
+  if (doc.status === "ready") return [{ type: "ready", docId: doc.id, pageCount: doc.pageCount }];
+  const pending = db.prepare("SELECT count(*) FROM pages WHERE doc_id = ? AND source = 'pending-ocr'").pluck().get(doc.id) as number;
+  return [{ type: "searchable", docId: doc.id, pageCount: doc.pageCount, ocrPages: pending }];
 }
 
 function formatMB(bytes: number): string {

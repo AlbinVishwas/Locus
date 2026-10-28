@@ -9,6 +9,8 @@ export interface InProgressUpload {
   tempId: string;
   name: string;
   stage: UploadStageEvent;
+  /** Set once the file is searchable and only its scanned pages are still being read. */
+  docId?: number;
 }
 
 interface AttachmentListProps {
@@ -20,14 +22,16 @@ interface AttachmentListProps {
 
 /** Attach/drag-drop lives in ChatInput; this is just the visible result: what's uploading right now, and what's already attached to this conversation. Nothing to render for either list is the common case, so the composer stays unchanged until a file shows up. */
 export default function AttachmentList({ files, uploading, onRemoveFile }: AttachmentListProps) {
-  if (files.length === 0 && uploading.length === 0) return null;
+  // A file that is searchable but still reading scanned pages has its own progress chip; the plain file chip would say it twice.
+  const shown = files.filter((f) => !(f.status === "indexing" && uploading.some((u) => u.docId === f.id)));
+  if (shown.length === 0 && uploading.length === 0) return null;
 
   return (
     <div className="mx-auto flex max-w-3xl flex-wrap gap-2 px-4 pb-2 sm:px-6">
       {uploading.map((u) => (
         <UploadingChip key={u.tempId} upload={u} />
       ))}
-      {files.map((f) => (
+      {shown.map((f) => (
         <FileChip key={f.id} file={f} onRemove={() => onRemoveFile(f.id)} />
       ))}
     </div>
@@ -58,6 +62,10 @@ function UploadingChip({ upload }: { upload: InProgressUpload }) {
   const { stage, name } = upload;
   const isError = stage.type === "error";
   const isOcr = stage.type === "stage" && stage.stage === "running-ocr";
+  // The text is searchable already; what's left is reading the scanned pages.
+  const improving = upload.docId !== undefined;
+  const pagesLeft = stage.type === "searchable" ? stage.ocrPages : isOcr ? stage.totalPages - stage.page : 0;
+  const pagesTotal = stage.type === "searchable" ? stage.ocrPages : isOcr ? stage.totalPages : 0;
   // Always called, every render, regardless of which stage is active --
   // React hooks can't be called conditionally. For a non-cycling stage the
   // word list is a single space, so the hook still runs but the label
@@ -83,6 +91,20 @@ function UploadingChip({ upload }: { upload: InProgressUpload }) {
     return (
       <div className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
         <StageLine state="finished" label={name} />
+      </div>
+    );
+  }
+
+  if (improving && (isOcr || stage.type === "searchable")) {
+    return (
+      <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[13px]">
+        <StageLine state="active" label={`Searchable now · improving ${pagesLeft} scanned ${pagesLeft === 1 ? "page" : "pages"}: ${name}`} />
+        <div className="h-1 w-40 overflow-hidden rounded-full bg-line" aria-hidden>
+          <div
+            className="h-full rounded-full bg-cream transition-[width] duration-300"
+            style={{ width: `${Math.round(((pagesTotal - pagesLeft) / Math.max(1, pagesTotal)) * 100)}%` }}
+          />
+        </div>
       </div>
     );
   }

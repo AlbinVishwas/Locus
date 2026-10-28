@@ -28,7 +28,8 @@
     "e2e:user-folders": "node scripts/e2e-user-folders.mjs",
     "e2e:folder-pick": "node scripts/e2e-folder-pick.mjs",
     "bench:upload": "tsx scripts/bench-upload.ts",
-    "measure:ocr-policy": "tsx scripts/measure-ocr-policy.ts"
+    "measure:ocr-policy": "tsx scripts/measure-ocr-policy.ts",
+    "compare:ocr": "tsx scripts/compare-ocr-policies.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

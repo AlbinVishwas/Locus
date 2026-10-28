@@ -4,7 +4,7 @@ import { markUploadDeleted } from "@/lib/records/ownership";
 import { userUploadBytes } from "@/lib/records/users";
 import { activityFor, authorizeConversation, requireUser } from "@/lib/session";
 import { indexPath } from "@/lib/search/indexDb";
-import { maxFolderFileBytes, maxFolderFiles, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
+import { maxFolderFileBytes, maxFolderFiles, storageCapBytes, uploadParallel, uploadsEnabled } from "@/lib/uploads/config";
 import { folderSessionId } from "@/lib/uploads/folders";
 import { deleteSingleUpload } from "@/lib/uploads/pipeline";
 import { measureStorageUsage } from "@/lib/uploads/storage";
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   const gate = await requireUser(req);
   if (!gate.ok) return gate.response;
   return Response.json(
-    { enabled: uploadsEnabled(), maxFiles: maxFolderFiles(), maxFileBytes: maxFolderFileBytes() },
+    { enabled: uploadsEnabled(), maxFiles: maxFolderFiles(), maxFileBytes: maxFolderFileBytes(), uploadParallel: uploadParallel() },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

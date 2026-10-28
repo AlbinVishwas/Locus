@@ -106,6 +106,8 @@ export interface FolderLimits {
   enabled: boolean;
   maxFiles: number;
   maxFileBytes: number;
+  /** How many files to send at once. */
+  uploadParallel?: number;
 }
 
 export async function getFolderLimits(): Promise<FolderLimits> {

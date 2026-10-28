@@ -84,6 +84,11 @@ export function maxFolderFileBytes(): number {
   return Math.min(maxUploadFileBytes(), TUNNEL_SAFE_FILE_BYTES);
 }
 
+/** How many files the browser sends at once (LOCUS_UPLOAD_PARALLEL, 1-8, default 4): enough to keep the connection full while the server reads the text of the next file. */
+export function uploadParallel(): number {
+  return Math.min(8, Math.max(1, intEnv("LOCUS_UPLOAD_PARALLEL", 4)));
+}
+
 /** Folder pick sessions use ids that start with this; see /api/folders. */
 export const FOLDER_ID_PREFIX = "fld_";
 
