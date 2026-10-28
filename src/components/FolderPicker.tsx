@@ -49,7 +49,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 function stageLabel(e: UploadStageEvent): string {
   if (e.type === "ready") return "Ready";
   if (e.type === "error") return "Failed";
-  if (e.type === "searchable") return `Searchable now · improving ${plural(e.ocrPages, "scanned page")}`;
+  // The file is searchable and its first scanned page is the one being read now.
+  if (e.type === "searchable") return `Scanning page 1 of ${e.ocrPages} · searchable now`;
   if (e.stage === "running-ocr") return `Scanning page ${e.page} of ${e.totalPages}`;
   return e.stage === "uploading" ? "Uploading" : e.stage === "reading" ? "Reading" : "Indexing";
 }

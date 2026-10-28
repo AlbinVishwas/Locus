@@ -12,10 +12,14 @@ administrator's **Sources**; those pages are unchanged.
 2. The browser reads each PDF once to get its content hash and asks the server which of them it
    already has (`POST /api/folders`). Files already indexed with the same content stay; files that
    changed or are no longer in the folder are removed; the rest are uploaded one request each
-   through the ordinary upload pipeline (`/api/uploads`) with the usual progress: *Uploading → Reading
-   → Scanning page N of M → Ready*. The OCR cache is keyed by file hash, so a page OCR'd before is
-   never OCR'd again.
-3. A chip appears above the search box: **Searching: Tender Pack · 3 files ×**. While it is up,
+   (four at a time, and resent if the connection drops) through the ordinary upload pipeline
+   (`/api/uploads`) with the usual progress: *Uploading → Reading → Scanning page N of M → Ready*.
+   The OCR cache is keyed by file hash, so a page OCR'd before is never OCR'd again.
+   A file is searchable as soon as its text is indexed; only the pages that need OCR (see
+   `docs/faster-uploads.md`) are read afterwards, in the background.
+3. A chip appears above the search box: **Searching: Tender Pack · 3 files ×**. If scanned pages are
+   still being read when the chip appears, the line under it says *Searchable now · improving N scanned
+   pages*, with a bar, until they are done. While the chip is up,
    every search covers only that folder's files: not your other uploads, not other folders, not the
    library. Each result is labelled with the file's path inside the folder (`Annex/annex-c.pdf`).
 4. **×** goes back to searching your own uploads. Picking another folder replaces the chip. Picking

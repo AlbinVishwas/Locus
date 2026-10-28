@@ -29,7 +29,8 @@
     "e2e:folder-pick": "node scripts/e2e-folder-pick.mjs",
     "bench:upload": "tsx scripts/bench-upload.ts",
     "measure:ocr-policy": "tsx scripts/measure-ocr-policy.ts",
-    "compare:ocr": "tsx scripts/compare-ocr-policies.ts"
+    "compare:ocr": "tsx scripts/compare-ocr-policies.ts",
+    "e2e:searchable-now": "node scripts/e2e-searchable-now.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
