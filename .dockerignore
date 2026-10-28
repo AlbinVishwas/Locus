@@ -1,0 +1,12 @@
+# Never copy secrets, data or build output into the image.
+.git
+node_modules
+.next
+data
+.env
+.env.*
+!.env.example
+*.zip
+**/.DS_Store
+docs/screenshots
+npm-debug.log*

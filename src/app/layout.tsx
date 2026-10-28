@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
 import "./globals.css";
@@ -11,10 +11,14 @@ import { adminEnabled, userSourcesEnabled, usersEnabled } from "@/lib/users/mode
 import { isLibraryEnabled, searchScope, type SearchScope } from "@/lib/library/config";
 import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 
+export const viewport: Viewport = { themeColor: "#0a0a0c", colorScheme: "dark" };
+
 export async function generateMetadata(): Promise<Metadata> {
   await connection();
   return {
     title: "Locus",
+    applicationName: "Locus",
+    appleWebApp: { capable: true, title: "Locus", statusBarStyle: "black-translucent" },
     description: isChatEnabled()
       ? "A local chat and document-search interface for LM Studio"
       : "Search inside your own documents, locally",

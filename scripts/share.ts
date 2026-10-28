@@ -36,7 +36,7 @@ function fail(message: string): never {
 
 function commandExists(command: string): boolean {
   try {
-    execFileSync("which", [command], { stdio: "ignore" });
+    execFileSync(process.platform === "win32" ? "where" : "which", [command], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -403,7 +403,9 @@ async function main() {
 
   // `-w <pid>`: caffeinate exits on its own once the server does, so there's
   // one less process this script has to remember to kill by hand.
+  // macOS only: other systems have no caffeinate, and a failed spawn must not take the script down.
   const caffeinate = spawn("caffeinate", ["-i", "-w", String(server.pid)]);
+  caffeinate.on("error", () => {});
 
   log("Starting the tunnel…");
   // TUNNEL_TRANSPORT_PROTOCOL (cloudflared reads it itself) is the manual

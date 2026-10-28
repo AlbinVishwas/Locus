@@ -1,0 +1,74 @@
+# Locus with Docker (macOS, Windows, Linux).
+#
+#   1. cp .env.example .env     and fill it in (SESSION_SECRET, an admin password, the server settings)
+#   2. docker compose up -d --build
+#   3. open http://localhost:3000 and sign in as admin
+#
+# Everything Locus writes (index, uploads, accounts) is in the named volume "locus-data".
+# To try S3 with a local MinIO instead of your own server:  docker compose --profile test up -d --build
+#   then set LOCUS_SERVER_TYPE=s3, LOCUS_SERVER_S3_ENDPOINT=http://minio:9000, LOCUS_SERVER_S3_BUCKET=tenders,
+#   LOCUS_SERVER_S3_ACCESS_KEY=locusminio, LOCUS_SERVER_S3_SECRET_KEY=locusminio-secret in .env.
+
+services:
+  locus:
+    build: .
+    image: locus:local
+    restart: unless-stopped
+    ports:
+      - "${LOCUS_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      # Where the container looks for the server's PDFs when LOCUS_SERVER_TYPE=folder (see the mount below).
+      LOCUS_SERVER_PATH: ${LOCUS_SERVER_PATH:-/server}
+    volumes:
+      - locus-data:/data
+      # A server folder on this computer, or a network share mounted on it, shown to Locus READ-ONLY (:ro).
+      # Point LOCUS_SERVER_HOST_PATH at it in .env (macOS /Volumes/tenders, Linux /mnt/nas/tenders,
+      # Windows C:/Users/me/tenders or a mapped drive Z:/). Not needed with an S3 server.
+      - type: bind
+        source: ${LOCUS_SERVER_HOST_PATH:-./server-example}
+        target: /server
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # A local S3-compatible server for trying Locus without your real one. Off unless you ask for the "test" profile.
+  minio:
+    profiles: ["test"]
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: locusminio
+      MINIO_ROOT_PASSWORD: locusminio-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Creates the "tenders" bucket in the test MinIO (put PDFs in it from the console at http://localhost:9001).
+  minio-init:
+    profiles: ["test"]
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 locusminio locusminio-secret &&
+      mc mb --ignore-existing local/tenders"
+
+volumes:
+  locus-data:
+  minio-data:

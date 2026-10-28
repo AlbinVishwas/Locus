@@ -59,5 +59,6 @@ export const config = {
   // Everything except Next's own static assets and the favicon. Those are
   // public by nature (there's nothing in them to protect) and gating them
   // would just add latency to every page load.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // The web-app manifest and icons are fetched by the browser without a session (to offer "install"), and hold nothing private.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon.png|apple-icon.png|icons/).*)"],
 };
