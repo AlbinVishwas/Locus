@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { constantTimeEqual } from "../auth";
-import { ADMIN_USERNAME, adminPasscode } from "../users/mode";
+import { ADMIN_USERNAME, adminPasscode, adminPasscodeHash } from "../users/mode";
 import { checkPasscodeStrength, dummyHash, generatePasscode, hashPasscode, verifyPasscode } from "./passcodes";
 
 /**
@@ -208,6 +208,15 @@ export async function ensureAdminUser(db: Database.Database): Promise<UserRow> {
     db.prepare("INSERT INTO users (username, role, passcode_hash, created_at, created_by) VALUES (?, 'admin', NULL, ?, 'env')").run(ADMIN_USERNAME, now());
     raw = db.prepare("SELECT * FROM users WHERE role = 'admin'").get() as Raw;
   }
+  const envHash = passcode === null ? adminPasscodeHash() : null;
+  if (envHash !== null && adminChecked !== `${raw.id}:h:${envHash}`) {
+    // The password is kept as a hash in .env.local: the account takes that hash as it is (a different hash signs everyone out).
+    if (raw.passcode_hash !== envHash) {
+      db.prepare("UPDATE users SET passcode_hash = ?, token_version = token_version + 1 WHERE id = ?").run(envHash, raw.id);
+      raw = db.prepare("SELECT * FROM users WHERE id = ?").get(raw.id) as Raw;
+    }
+    adminChecked = `${raw.id}:h:${envHash}`;
+  }
   if (passcode !== null && adminChecked !== `${raw.id}:${passcode}`) {
     const same = raw.passcode_hash !== null && (await verifyPasscode(passcode, raw.passcode_hash));
     if (!same) {
@@ -223,6 +232,13 @@ export async function ensureAdminUser(db: Database.Database): Promise<UserRow> {
 export function adminPasscodeMatches(typed: string): boolean {
   const configured = adminPasscode();
   return configured !== null && constantTimeEqual(typed.normalize("NFKC"), configured.normalize("NFKC"));
+}
+
+/** Whether a typed admin password is right: against LOCUS_ADMIN_PASSCODE, or -- when only the hash is configured -- against LOCUS_ADMIN_PASSCODE_HASH. */
+export async function adminLoginOk(typed: string): Promise<boolean> {
+  if (adminPasscode() !== null) return adminPasscodeMatches(typed);
+  const hash = adminPasscodeHash();
+  return hash !== null && (await verifyPasscode(typed, hash));
 }
 
 export function _resetAdminCheckForTests(): void {

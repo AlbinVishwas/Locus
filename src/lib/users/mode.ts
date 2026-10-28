@@ -35,9 +35,18 @@ export function adminPasscode(env: Env = process.env): string | null {
   return p && p.length > 0 ? p : null;
 }
 
-/** The admin area (Sources, Users, Activity) exists only in users mode with an admin passcode set. */
+/**
+ * The admin password as a hash (LOCUS_ADMIN_PASSCODE_HASH, a "scrypt$..." string written by `npm run setup`), for people
+ * who would rather not keep the password itself in .env.local. LOCUS_ADMIN_PASSCODE, when also set, wins.
+ */
+export function adminPasscodeHash(env: Env = process.env): string | null {
+  const h = env.LOCUS_ADMIN_PASSCODE_HASH?.trim();
+  return h && h.startsWith("scrypt$") ? h : null;
+}
+
+/** The admin area (Server, Sources, Users, Activity) exists only in users mode with an admin passcode (or its hash) set. */
 export function adminEnabled(env: Env = process.env): boolean {
-  return usersEnabled(env) && adminPasscode(env) !== null;
+  return usersEnabled(env) && (adminPasscode(env) !== null || adminPasscodeHash(env) !== null);
 }
 
 /** Whether searches' text goes in the activity log (admin-only). LOCUS_LOG_QUERY_TEXT=false keeps everything else but not the text. */
@@ -53,10 +62,10 @@ export function activityRetentionDays(env: Env = process.env): number {
   return n;
 }
 
-/** Per-user upload limit in bytes (users mode), under the shared cap. */
+/** Per-user upload limit in bytes (users mode), under the shared cap. Default 20 GB (LOCUS_USER_UPLOAD_MB=20000). */
 export function userUploadLimitBytes(env: Env = process.env): number {
   const raw = env.LOCUS_USER_UPLOAD_MB;
-  if (raw === undefined || raw.trim() === "") return 1000 * 1024 * 1024;
+  if (raw === undefined || raw.trim() === "") return 20_000 * 1024 * 1024;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) throw new Error(`LOCUS_USER_UPLOAD_MB must be a positive number, got "${raw}"`);
   return n * 1024 * 1024;

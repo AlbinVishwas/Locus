@@ -8,6 +8,8 @@ import { maxFolderFileBytes, maxFolderFiles, storageCapBytes, uploadParallel, up
 import { folderSessionId } from "@/lib/uploads/folders";
 import { deleteSingleUpload } from "@/lib/uploads/pipeline";
 import { measureStorageUsage } from "@/lib/uploads/storage";
+import { checkUploadSpace } from "@/lib/uploads/space";
+import { errorResponse } from "@/lib/errors/catalog";
 import { sanitizeOriginalFilename } from "@/lib/uploads/validate";
 import { getWritableDb } from "@/lib/uploads/writableDb";
 import { userUploadLimitBytes } from "@/lib/users/mode";
@@ -125,6 +127,9 @@ export async function POST(req: Request) {
   if (usage.totalBytes + incoming > cap) {
     return new Response(`Storage is full: this folder needs ${mb(incoming)} and ${mb(usage.totalBytes)} of ${mb(cap)} is used. ${ADMIN_HINT}`, { status: 507 });
   }
+
+  const space = checkUploadSpace(incoming);
+  if (!space.ok) return errorResponse("LOCUS-DISK-003", space.detail);
 
   return Response.json(
     { conversationId, total: files.length, present: kept.size, removed, upload: upload.map((f) => f.path) },

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { envWithFallback } from "../env";
+import { diskInfo } from "../server/disk";
 
 /**
  * Upload settings, env-configurable the same way the indexer and the chat
@@ -34,7 +35,7 @@ const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
  */
 const DEFAULT_MAX_FILES_PER_CONVERSATION = 20;
 
-/** 5 GB: a laptop-friendly default that comfortably holds many conversations' worth of tender PDFs (the full 13-document sample set is under 40 MB). */
+/** 5 GB: the least the default cap ever is (the full 13-document sample set is under 40 MB). */
 const DEFAULT_STORAGE_CAP_BYTES = 5 * 1024 * 1024 * 1024;
 
 function intEnv(name: string, fallback: number): number {
@@ -92,8 +93,19 @@ export function uploadParallel(): number {
 /** Folder pick sessions use ids that start with this; see /api/folders. */
 export const FOLDER_ID_PREFIX = "fld_";
 
+/**
+ * STORAGE_CAP_BYTES, or -- when it isn't set -- half of the disk that holds the uploads (never under 5 GB), so the
+ * default scales with the machine instead of being one number for every laptop. The free-disk reserve
+ * (uploads/space.ts) still applies on top.
+ */
 export function storageCapBytes(): number {
-  return intEnv("STORAGE_CAP_BYTES", DEFAULT_STORAGE_CAP_BYTES);
+  const raw = process.env.STORAGE_CAP_BYTES;
+  if (raw !== undefined && raw !== "") return intEnv("STORAGE_CAP_BYTES", DEFAULT_STORAGE_CAP_BYTES);
+  try {
+    return Math.max(DEFAULT_STORAGE_CAP_BYTES, Math.floor(diskInfo(uploadsDir()).totalBytes / 2));
+  } catch {
+    return DEFAULT_STORAGE_CAP_BYTES;
+  }
 }
 
 /**

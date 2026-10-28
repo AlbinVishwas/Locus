@@ -1,7 +1,7 @@
 import { constantTimeEqual, createSessionToken, SESSION_COOKIE, sessionTtlMs } from "../auth";
 import { callerIp, logActivity } from "../records/activity";
 import { getRecordsDb } from "../records/db";
-import { createUser, ensureAdminUser, adminPasscodeMatches, findUserByName, recordLogin, UserError, verifyLogin, type Role } from "../records/users";
+import { createUser, ensureAdminUser, adminLoginOk, findUserByName, recordLogin, UserError, verifyLogin, type Role } from "../records/users";
 import { adminEnabled, ADMIN_USERNAME, signupCode, signupMode } from "./mode";
 import { adminSignInGlobal, signInByAddress, signInByUsername, signUpByAddress, signUpGlobal } from "./limits";
 
@@ -69,7 +69,7 @@ export async function signIn(req: Request, input: { username?: unknown; passcode
 
   if (isAdminName) {
     // Admin: the passcode in .env.local. With none set, admin sign-in is closed and looks like any wrong passcode.
-    if (!adminEnabled() || !adminPasscodeMatches(passcode)) {
+    if (!adminEnabled() || !(await adminLoginOk(passcode))) {
       return fail(adminEnabled() ? "wrong admin passcode" : "admin sign-in is not set up", ADMIN_USERNAME);
     }
     const admin = await ensureAdminUser(db);

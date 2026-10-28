@@ -11,6 +11,8 @@ import { ensureRetentionScheduleStarted } from "@/lib/uploads/cleanup";
 import { FOLDER_ID_PREFIX, maxFilesPerConversation, maxFolderFiles, maxUploadFileBytes, storageCapBytes, uploadsEnabled } from "@/lib/uploads/config";
 import { deleteConversationUploads, deleteSingleUpload, indexUpload, type UploadStage } from "@/lib/uploads/pipeline";
 import { measureStorageUsage } from "@/lib/uploads/storage";
+import { checkUploadSpace } from "@/lib/uploads/space";
+import { errorResponse } from "@/lib/errors/catalog";
 import { sanitizeOriginalFilename, validateUploadBytes } from "@/lib/uploads/validate";
 import { getWritableDb } from "@/lib/uploads/writableDb";
 import { uploadedDocuments } from "../../../../scripts/indexer/store";
@@ -122,6 +124,10 @@ export async function POST(req: Request) {
       { status: 507 }
     );
   }
+
+  // Free disk: refuse before anything is written if the disk wouldn't keep its reserve.
+  const space = checkUploadSpace(bytes.length);
+  if (!space.ok) return errorResponse("LOCUS-DISK-003", space.detail);
 
   // A picked folder's files are named by their path inside the folder, so results show where each one sits.
   const originalFilename = sanitizeOriginalFilename(isFolder && typeof pickedPath === "string" && pickedPath ? pickedPath : file.name || "document.pdf");
