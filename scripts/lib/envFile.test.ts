@@ -3,9 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { afterEach, describe, expect, it } from "vitest";
-import { hasEnvKey, quoteEnvValue, removeEnvKey, setEnvValue } from "./envFile";
+import { dropPlaceholders, hasEnvKey, quoteEnvValue, removeEnvKey, setEnvValue } from "./envFile";
 
 describe(".env.local writing", () => {
+  it("placeholders from .env.example are blanks, not settings", () => {
+    expect(dropPlaceholders("A=<fill-me-in>\nB=real\n# C=<x>\nD = <y>\n")).toBe("B=real\n# C=<x>\n");
+  });
+
   it("replaces a key in place, appends a missing one, keeps comments and other keys", () => {
     let t = "# my settings\nA=1\nB=2\n\nC=3\n";
     t = setEnvValue(t, "B", "two");

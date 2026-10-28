@@ -46,3 +46,11 @@ export function removeEnvKey(text: string, key: string): string {
     .filter((l) => !keyLine(key).test(l))
     .join("\n");
 }
+
+/** Drops lines whose value is a placeholder from .env.example (<like-this>): an unset setting, not a real value. */
+export function dropPlaceholders(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*[A-Z0-9_]+\s*=\s*<[^>]*>\s*$/.test(l))
+    .join("\n");
+}

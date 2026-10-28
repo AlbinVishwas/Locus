@@ -15,7 +15,7 @@ import { defaultDataDir } from "../src/lib/library/config";
 import { loadServerConfig, ServerConfigError, describeServer, isAbsolutePath } from "../src/lib/server/config";
 import { createConnector } from "../src/lib/server/connector";
 import { diskInfo, mbOrGb } from "../src/lib/server/disk";
-import { removeEnvKey, setEnvValue } from "./lib/envFile";
+import { dropPlaceholders, removeEnvKey, setEnvValue } from "./lib/envFile";
 
 class Prompter {
   private rl: readline.Interface;
@@ -88,6 +88,7 @@ async function main() {
   } else {
     text = fs.existsSync(example) ? fs.readFileSync(example, "utf8") : "";
   }
+  text = dropPlaceholders(text); // a "<like-this>" value is a blank to fill in, not a setting
   const set = (k: string, v: string) => (text = setEnvValue(text, k, v));
 
   // Sign-in
