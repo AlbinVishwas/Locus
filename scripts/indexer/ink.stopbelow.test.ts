@@ -44,7 +44,7 @@ function randomPage(seed: number): { pgm: Pgm; boxes: PageBoxes } {
   const mode = Math.floor(r() * 4);
   const scatter = Math.floor(r() * 2500); // drawn once (not on every pass of the loop)
   if (mode === 1 || mode === 3) for (let k = 0; k < scatter; k++) dark(Math.floor(r() * width), Math.floor(r() * height));
-  if (mode === 2 || mode === 3) for (let y of [30, 90, 200]) for (let x = 5; x < 195; x++) dark(x, y);
+  if (mode === 2 || mode === 3) for (const y of [30, 90, 200]) for (let x = 5; x < 195; x++) dark(x, y);
   return { pgm: { width, height, maxValue: 255, pixels }, boxes: { width: width * 0.72, height: height * 0.72, words } };
 }
 
