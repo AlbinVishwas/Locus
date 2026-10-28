@@ -17,6 +17,28 @@ import path from "node:path";
 
 export const SERVER_SOURCE_ID = "env-server";
 
+/** A skipped file's reason in plain words (the tool's own message goes along in `detail`). */
+export function describeFailure(kind: string, message: string | null): string {
+  switch (kind) {
+    case "corrupt":
+      return "This PDF is damaged, so it can't be read.";
+    case "encrypted":
+      return "This PDF needs a password to open, so it was skipped.";
+    case "timeout":
+      return "Reading this PDF took too long, so it was skipped.";
+    case "too-large":
+      return "This PDF is bigger than the size limit, so it was skipped.";
+    case "not-a-pdf":
+      return "This file isn't a PDF (it doesn't start with a PDF header), so it was skipped.";
+    case "permission-denied":
+      return "The server wouldn't let Locus read this file (no permission).";
+    case "vanished":
+      return "This file was removed from the server while it was being read.";
+    default:
+      return message ?? "It couldn't be read.";
+  }
+}
+
 export interface ServerStatus {
   configured: boolean;
   type: "none" | "folder" | "s3";
@@ -49,7 +71,7 @@ export interface ServerStatus {
     ratioSource: "default" | "observed" | null;
     fits: boolean | null;
   };
-  failures: Array<{ file: string; kind: string; message: string | null; at: string }>;
+  failures: Array<{ file: string; kind: string; message: string; detail: string | null; at: string }>;
   banner: { code: ErrorCode | null; tone: "error" | "warning" | "info"; title: string; message: string; action: string | null } | null;
 }
 
@@ -90,7 +112,9 @@ export function buildServerStatus(library: Database.Database | null, config: Lib
         .prepare("SELECT coalesce(sum(status = 'ready'), 0) AS ready, coalesce(sum(status = 'failed'), 0) AS failed, coalesce(sum(pages_done), 0) AS pages, coalesce(sum(CASE WHEN status = 'ready' THEN size_bytes ELSE 0 END), 0) AS bytes FROM documents WHERE source_id = ?")
         .get(SERVER_SOURCE_ID) as { ready: number; failed: number; pages: number; bytes: number };
       const pending = Number(library.prepare("SELECT count(*) FROM jobs WHERE source_id = ? AND state IN ('pending','running')").pluck().get(SERVER_SOURCE_ID));
-      const total = c.ready + c.failed + pending;
+      // A file that can't be read leaves no document row (any earlier copy is removed), only a line in `failures`: that is what is counted.
+      const failedCount = Number(library.prepare("SELECT count(*) FROM failures WHERE source_id = ? AND kind != 'deferred'").pluck().get(SERVER_SOURCE_ID));
+      const total = c.ready + failedCount + pending;
       const since = new Date(now - 10 * 60_000).toISOString();
       const recent = Number(library.prepare("SELECT count(*) FROM documents WHERE source_id = ? AND status = 'ready' AND indexed_at > ?").pluck().get(SERVER_SOURCE_ID, since));
       const perMin = recent > 0 ? recent / 10 : null;
@@ -99,10 +123,10 @@ export function buildServerStatus(library: Database.Database | null, config: Lib
         documents: c.ready,
         pagesIndexed: c.pages,
         ocrPagesRun: typeof worked === "number" ? worked : null,
-        failed: c.failed,
+        failed: failedCount,
         pending,
         total,
-        percent: total > 0 ? Math.round(((c.ready + c.failed) / total) * 100) : null,
+        percent: total > 0 ? Math.round(((c.ready + failedCount) / total) * 100) : null,
         filesPerMinute: perMin,
         etaSeconds: pending > 0 && perMin ? Math.round((pending / perMin) * 60) : null,
       };
@@ -111,8 +135,8 @@ export function buildServerStatus(library: Database.Database | null, config: Lib
       base.sync.lastSyncedAt = (library.prepare("SELECT max(finished_at) FROM scans WHERE source_id = ? AND completed = 1").pluck().get(SERVER_SOURCE_ID) as string | null) ?? null;
       lastError = (library.prepare("SELECT last_error FROM sources WHERE id = ?").pluck().get(SERVER_SOURCE_ID) as string | null | undefined) ?? null;
       base.failures = (
-        library.prepare("SELECT display_name AS file, kind, message, at FROM failures WHERE source_id = ? AND kind != 'deferred' ORDER BY at DESC LIMIT 200").all(SERVER_SOURCE_ID) as ServerStatus["failures"]
-      ).map((f) => ({ ...f }));
+        library.prepare("SELECT display_name AS file, kind, message, at FROM failures WHERE source_id = ? AND kind != 'deferred' ORDER BY at DESC LIMIT 200").all(SERVER_SOURCE_ID) as Array<{ file: string; kind: string; message: string | null; at: string }>
+      ).map((f) => ({ file: f.file, kind: f.kind, message: describeFailure(f.kind, f.message), detail: f.message, at: f.at }));
 
       // Space: what's free now, what the index is using, and what the rest is expected to take.
       const disk = diskInfo(config.dataDir);

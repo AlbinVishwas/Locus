@@ -124,8 +124,8 @@ export default function ServerView() {
               </div>
             </div>
             <p className="mt-1.5 text-[14px] text-primary">
-              {index.documents.toLocaleString("en-US")} of {index.total.toLocaleString("en-US")} files indexed
-              <span className="text-secondary"> · {index.pagesIndexed.toLocaleString("en-US")} pages{index.ocrPagesRun ? ` · ${index.ocrPagesRun.toLocaleString("en-US")} scanned pages read` : ""}</span>
+              {index.documents.toLocaleString("en-US")} of {(index.total - index.failed).toLocaleString("en-US")} files indexed
+              <span className="text-secondary"> · {index.pagesIndexed.toLocaleString("en-US")} pages{index.ocrPagesRun ? ` · ${index.ocrPagesRun.toLocaleString("en-US")} scanned pages read` : ""}{index.failed > 0 ? ` · ${index.failed.toLocaleString("en-US")} couldn\u2019t be read` : ""}</span>
             </p>
             {index.percent !== null && (
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface" role="progressbar" aria-label="Indexing progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={index.percent}>
@@ -164,7 +164,9 @@ export default function ServerView() {
                 {status.failures.map((f) => (
                   <li key={f.file} className="py-2">
                     <p className="break-words text-primary">{f.file}</p>
-                    <p className="text-[12px] text-secondary">{f.message ?? f.kind}</p>
+                    <p className="text-[12px] text-secondary" title={f.detail ?? undefined}>
+                      {f.message}
+                    </p>
                   </li>
                 ))}
               </ul>
